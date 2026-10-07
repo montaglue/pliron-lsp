@@ -1,0 +1,16 @@
+[package]
+name = "pliron-lsp-engine-ref"
+description = "Reference pliron-lsp engine: builtin + llvm dialects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pliron-lsp-engine-ref"
+path = "src/main.rs"
+
+[dependencies]
+pliron.workspace = true
+pliron-llvm.workspace = true
+pliron-lsp-engine.workspace = true

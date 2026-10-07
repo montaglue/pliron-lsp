@@ -1,0 +1,12 @@
+[package]
+name = "pliron-ir-syntax"
+description = "Dialect-agnostic, error-tolerant syntax layer for pliron textual IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+expect-test.workspace = true

@@ -1,0 +1,12 @@
+builtin.module @toy {
+  ^entry():
+  builtin.func @main: builtin.function <() -> ()> {
+    ^entry():
+    a = toy.const <builtin.integer <3: si64>> : builtin.integer si64;
+    b = toy.const <builtin.integer <4: si64>> : builtin.integer si64;
+    c = toy.add a, b : builtin.integer si64;
+    d = toy.const <builtin.integer <1: si64>> : toy.num <32>;
+    toy.print value = c;
+    toy.return
+  }
+}

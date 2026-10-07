@@ -1,0 +1,31 @@
+[package]
+name = "pliron-lsp"
+description = "Language server for pliron textual IR that adapts to custom dialects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pliron-lsp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+cargo_metadata.workspace = true
+crossbeam-channel.workspace = true
+lsp-server.workspace = true
+lsp-types.workspace = true
+pliron-ir-syntax.workspace = true
+pliron-lsp-protocol.workspace = true
+proc-macro2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syn.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true

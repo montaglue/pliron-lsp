@@ -1,0 +1,26 @@
+{
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["<", ">"]
+  ],
+  "autoClosingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] }
+  ],
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["<", ">"],
+    ["\"", "\""]
+  ],
+  "wordPattern": "[\\^@!]?[\\p{L}_][\\p{L}\\p{N}_]*(\\.[\\p{L}_][\\p{L}\\p{N}_]*)*|-?\\d[\\w.]*",
+  "indentationRules": {
+    "increaseIndentPattern": "(\\{[^}\"]*$)|(^\\s*\\^[^:]*:\\s*$)",
+    "decreaseIndentPattern": "^\\s*\\}"
+  }
+}

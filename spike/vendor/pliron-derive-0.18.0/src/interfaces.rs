@@ -1,0 +1,283 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) The pliron contributors
+
+//! Attribute macros for defining and implementing Interfaces.
+
+use quote::{ToTokens, quote};
+use syn::{
+    DeriveInput, ItemImpl, ItemTrait, Path, Result, Token, TypeParamBound, parse::Parse,
+    parse_quote, punctuated::Punctuated,
+};
+
+/// This macro does two things:
+/// 1. Prepends `supertrait` as a super trait.
+/// 2. Adds an entry in `interface_deps_slice` for each
+///    super interface, so that verifiers of those can be run prior to this.
+pub(crate) fn interface_define(
+    input: proc_macro::TokenStream,
+    supertrait: Path,
+    verifier_type: Path,
+    append_dyn_clone_trait: bool,
+    target_marker_trait: Path,
+) -> Result<proc_macro2::TokenStream> {
+    let mut r#trait = syn::parse2::<ItemTrait>(input.into())?;
+
+    if let Some(lifetime) = r#trait.generics.lifetimes().next() {
+        return Err(syn::Error::new_spanned(
+            lifetime,
+            "An interface cannot have a lifetime parameter",
+        ));
+    }
+
+    let intr_name = r#trait.ident.clone();
+    let generics = r#trait.generics.clone();
+    // https://github.com/kardeiz/objekt-clonable/blob/master/dyn-clonable-impl/src/lib.rs
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let dep_interfaces: Vec<_> = r#trait
+        .supertraits
+        .iter()
+        .filter_map(|dep| {
+            let TypeParamBound::Trait(trait_bound) = dep else {
+                return None;
+            };
+            Some(trait_bound.path.clone())
+        })
+        .collect();
+    let supertraits = r#trait.supertraits;
+
+    // Create a method for getting super verifiers + self verifier
+    let all_verifiers = quote! {
+        #[doc(hidden)]
+        fn __all_verifiers() -> ::pliron::alloc::vec::Vec<#verifier_type> where Self: Sized {
+            let mut all_verifiers: ::pliron::alloc::vec::Vec<#verifier_type> = ::pliron::alloc::vec::Vec::new();
+            #(
+                all_verifiers.append(&mut <Self as #dep_interfaces>::__all_verifiers());
+            )*
+            all_verifiers.push(<Self as #intr_name #ty_generics >::verify as #verifier_type);
+            all_verifiers
+        }
+    };
+
+    for item in &mut r#trait.items {
+        if let syn::TraitItem::Fn(meth) = item
+            && meth.sig.ident == "verify"
+            && meth.default.is_some()
+        {
+            // Found the verifier method, add a #[inline(never)] to prevent inlining.
+            // This helps reduce multiple executions of the same verifier when
+            // called from different sub-interfaces.
+            meth.attrs.push(parse_quote! { #[inline(never)] });
+            // Add a #[doc(hidden)] to hide it from documentation,
+            // since users should call `verify_op`, `verify_attr`, or `verify_type` instead.
+            meth.attrs.push(parse_quote! { #[doc(hidden)] });
+        }
+    }
+
+    r#trait
+        .items
+        .push(syn::parse2::<syn::TraitItem>(all_verifiers)?);
+
+    // Append main super trait (Op/Attribute/Type).
+    r#trait.supertraits = parse_quote! { #supertrait + #supertraits };
+
+    let mut output = r#trait.into_token_stream();
+    if append_dyn_clone_trait {
+        output.extend(quote! {
+            ::pliron::dyn_clone::clone_trait_object!(#impl_generics #intr_name #ty_generics #where_clause);
+        });
+    }
+
+    output.extend(quote! {
+        impl #impl_generics #target_marker_trait for dyn #intr_name #ty_generics #where_clause {}
+    });
+
+    Ok(output)
+}
+
+/// Implement common traits for `Box<dyn Interface>`.
+///
+/// These all delegate to the `Attribute` that the interface object holds.
+pub(crate) fn attr_interface_obj_traits(
+    input: proc_macro::TokenStream,
+) -> Result<proc_macro2::TokenStream> {
+    let r#trait = syn::parse2::<ItemTrait>(input.into())?;
+    let intr_name = r#trait.ident.clone();
+    let generics = r#trait.generics.clone();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    // Only 'static lifetimes work, and that's checked for by `interface_define`.
+    let mut obj_where_clause = where_clause
+        .cloned()
+        .unwrap_or_else(|| parse_quote! { where });
+    for ty_param in generics.type_params() {
+        let ty_param = &ty_param.ident;
+        obj_where_clause
+            .predicates
+            .push(parse_quote! { #ty_param: 'static });
+    }
+
+    // Equality and hashing are on the interface object itself.
+    // `Box<dyn Interface>` gets them from the standard library's impls for `Box`.
+    Ok(quote! {
+        impl #impl_generics ::core::cmp::PartialEq for dyn #intr_name #ty_generics #obj_where_clause {
+            fn eq(&self, other: &Self) -> bool {
+                ::pliron::attribute::Attribute::eq_attr(self, other)
+            }
+        }
+
+        impl #impl_generics ::core::cmp::Eq for dyn #intr_name #ty_generics #obj_where_clause {}
+
+        impl #impl_generics ::core::hash::Hash for dyn #intr_name #ty_generics #obj_where_clause {
+            fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
+                ::core::hash::Hasher::write_u64(
+                    state,
+                    ::pliron::attribute::Attribute::hash_attr(self).into(),
+                );
+            }
+        }
+
+        // Printable: Call the same formatting function that `AttrObj` does.
+        impl #impl_generics ::pliron::printable::Printable
+            for ::pliron::alloc::boxed::Box<dyn #intr_name #ty_generics> #obj_where_clause
+        {
+            fn fmt(
+                &self,
+                ctx: &::pliron::context::Context,
+                state: &::pliron::printable::State,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
+                ::pliron::attribute::fmt_attr_obj(&**self, ctx, state, f)
+            }
+        }
+
+        // Parsable: The box parses any attribute, and rejects one that isn't of this interface.
+        impl #impl_generics ::pliron::parsable::Parsable
+            for ::pliron::alloc::boxed::Box<dyn #intr_name #ty_generics> #obj_where_clause
+        {
+            type Arg = ();
+            type Parsed = Self;
+
+            fn parse<'a>(
+                state_stream: &mut ::pliron::parsable::StateStream<'a>,
+                _arg: Self::Arg,
+            ) -> ::pliron::parsable::ParseResult<'a, Self::Parsed> {
+                ::pliron::attribute::parse_attr_interface_obj(state_stream)
+            }
+        }
+    })
+}
+
+/// Whether an interface impl must also be registered for casting boxed objects
+/// (i.e., with `boxed_type_to_trait!`, in addition to `type_to_trait!`).
+pub(crate) enum RegisterBoxedCast {
+    Register,
+    Skip,
+}
+
+/// Records statically that the rust type implements the interface
+pub(crate) enum ImplsMarkerTrait {
+    /// Implement this marker trait for the rust type.
+    Implement(Path),
+    /// This kind of interface has no marker trait.
+    Skip,
+}
+
+/// This macro does two things:
+/// 1. Mark that the rust type be castable to the interface via `type_to_trait!`
+///    (and via `boxed_type_to_trait!` when [RegisterBoxedCast::Register] is specified).
+/// 2. Register the trait verifier in the rust type's list of interface verifiers.
+pub(crate) fn interface_impl(
+    input: proc_macro2::TokenStream,
+    interface_verifiers_slice: Path,
+    all_verifiers_fn_type: Path,
+    register_boxed_cast: RegisterBoxedCast,
+    impls_marker_trait: ImplsMarkerTrait,
+) -> Result<proc_macro2::TokenStream> {
+    let r#impl = syn::parse2::<ItemImpl>(input)?;
+
+    let Some((intr_name, _)) = r#impl.trait_.clone() else {
+        return Err(syn::Error::new_spanned(
+            r#impl,
+            "#[*_interface_impl] can be specified only on a trait impl",
+        ));
+    };
+
+    if !r#impl.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            r#impl,
+            "#[*_interface_impl] cannot be specified on a trait impl with generic parameters",
+        ));
+    }
+
+    let rust_ty = (*r#impl.self_ty).clone();
+    let mut trait_cast = quote! {
+        ::pliron::type_to_trait!(#rust_ty, #intr_name);
+    };
+    if matches!(register_boxed_cast, RegisterBoxedCast::Register) {
+        trait_cast.extend(quote! {
+            ::pliron::boxed_type_to_trait!(#rust_ty, #intr_name);
+        });
+    }
+    let verifiers_entry = quote! {
+        const _: () = {
+            #[cfg_attr(not(any(target_family = "wasm", miri)), ::pliron::linkme::distributed_slice(#interface_verifiers_slice), linkme(crate = ::pliron::linkme))]
+            static INTERFACE_VERIFIER: (::core::any::TypeId, (#all_verifiers_fn_type)) =
+                    (::core::any::TypeId::of::<#rust_ty>(), <#rust_ty as #intr_name>::__all_verifiers);
+            #[cfg(any(target_family = "wasm", miri))]
+            ::pliron::inventory::submit! {
+                ::pliron::InventoryWrapper(&INTERFACE_VERIFIER)
+            }
+        };
+    };
+
+    let mut output = r#impl.to_token_stream();
+    output.extend(trait_cast);
+    output.extend(verifiers_entry);
+    if let ImplsMarkerTrait::Implement(impls_marker_trait) = impls_marker_trait {
+        output.extend(quote! {
+            impl #impls_marker_trait<dyn #intr_name> for #rust_ty {}
+        });
+    }
+
+    Ok(output)
+}
+
+struct PathList {
+    paths: Vec<Path>,
+}
+
+impl Parse for PathList {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let paths = Punctuated::<Path, Token![,]>::parse_terminated(input)?;
+        Ok(PathList {
+            paths: paths.into_iter().collect(),
+        })
+    }
+}
+
+/// For each interface specified in the list, expand it to
+/// ```no_compile
+/// #[op_interface_impl]
+/// impl Interface for OpStruct { }
+/// ```
+pub(crate) fn derive_op_interface_impl(
+    attr: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> Result<proc_macro2::TokenStream> {
+    let intrs = syn::parse2::<PathList>(attr.into())?;
+    let input = syn::parse2::<DeriveInput>(input.into())?;
+    let struct_name = input.ident.clone();
+
+    let impls = intrs.paths.into_iter().map(|path| {
+        quote! {
+            #[::pliron::derive::op_interface_impl]
+            impl #path for #struct_name {}
+        }
+    });
+
+    let mut output = input.to_token_stream();
+    output.extend(impls);
+
+    Ok(output)
+}

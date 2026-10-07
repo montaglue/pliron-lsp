@@ -1,0 +1,168 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "pliron",
+  "scopeName": "source.pliron",
+  "patterns": [
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#outlined-header"
+    },
+    {
+      "include": "#op"
+    },
+    {
+      "include": "#block-header"
+    },
+    {
+      "include": "#block-label"
+    },
+    {
+      "include": "#symbol"
+    },
+    {
+      "include": "#outline-ref"
+    },
+    {
+      "include": "#qualname"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#arrow"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "string": {
+      "name": "string.quoted.double.pliron",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pliron",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "outlined-header": {
+      "name": "keyword.other.outlined.pliron",
+      "match": "^outlined_attributes(?=\\s*:)"
+    },
+    "op": {
+      "comment": "results = dialect.op at the start of a statement",
+      "match": "(?:^|(?<=[;{]))\\s*((?:[\\p{L}_][\\p{L}\\p{N}_]*\\s*,\\s*)*[\\p{L}_][\\p{L}\\p{N}_]*)?\\s*(=)?\\s*([\\p{L}_][\\p{L}\\p{N}_]*)(\\.)([\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*)",
+      "captures": {
+        "1": {
+          "name": "variable.other.definition.pliron"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.pliron"
+        },
+        "3": {
+          "name": "entity.name.namespace.pliron"
+        },
+        "4": {
+          "name": "punctuation.accessor.pliron"
+        },
+        "5": {
+          "name": "entity.name.function.pliron"
+        }
+      }
+    },
+    "block-header": {
+      "comment": "^label(args): at the start of a line",
+      "begin": "^\\s*(\\^[\\p{L}_][\\p{L}\\p{N}_]*)\\s*(\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.label.pliron"
+        },
+        "2": {
+          "name": "punctuation.section.parens.begin.pliron"
+        }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.parens.end.pliron"
+        }
+      },
+      "patterns": [
+        {
+          "match": "([\\p{L}_][\\p{L}\\p{N}_]*)\\s*(:)",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.pliron"
+            },
+            "2": {
+              "name": "punctuation.separator.pliron"
+            }
+          }
+        },
+        {
+          "include": "#qualname"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    "block-label": {
+      "name": "entity.name.label.pliron",
+      "match": "\\^[\\p{L}_][\\p{L}\\p{N}_]*"
+    },
+    "symbol": {
+      "name": "entity.name.function.symbol.pliron",
+      "match": "@[\\p{L}_][\\p{L}\\p{N}_]*"
+    },
+    "outline-ref": {
+      "name": "comment.other.outline-ref.pliron",
+      "match": "!\\d+"
+    },
+    "qualname": {
+      "match": "\\b([\\p{L}_][\\p{L}\\p{N}_]*)(\\.)([\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*)",
+      "captures": {
+        "1": {
+          "name": "entity.name.namespace.pliron"
+        },
+        "2": {
+          "name": "punctuation.accessor.pliron"
+        },
+        "3": {
+          "name": "entity.name.type.pliron"
+        }
+      }
+    },
+    "number": {
+      "name": "constant.numeric.pliron",
+      "match": "(?<![\\p{L}\\p{N}_])-?\\d[\\p{L}\\p{N}_.]*"
+    },
+    "arrow": {
+      "name": "keyword.operator.arrow.pliron",
+      "match": "->"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.terminator.pliron",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.pliron",
+          "match": "[,:]"
+        },
+        {
+          "name": "keyword.operator.pliron",
+          "match": "="
+        }
+      ]
+    }
+  }
+}

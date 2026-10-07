@@ -1,0 +1,253 @@
+{
+  "name": "pliron",
+  "displayName": "pliron IR",
+  "description": "pliron IR support powered by pliron-lsp: exact diagnostics, highlighting, navigation and type hints from your project's own dialects \u2014 no setup",
+  "version": "0.1.0",
+  "publisher": "pliron-lsp",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:pliron",
+    "workspaceContains:**/*.pliron",
+    "workspaceContains:**/*.plir"
+  ],
+  "main": "./out/main.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In untrusted workspaces pliron-lsp does not build dialect engines (that would run the workspace's build scripts and proc macros); the reference engine and syntax features still work.",
+      "restrictedConfigurations": [
+        "pliron.server.path",
+        "pliron.engine.path"
+      ]
+    }
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "pliron",
+        "aliases": [
+          "pliron IR",
+          "pliron"
+        ],
+        "extensions": [
+          ".pliron",
+          ".plir"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pliron",
+        "scopeName": "source.pliron",
+        "path": "./syntaxes/pliron.tmLanguage.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "label",
+        "description": "A basic block label"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "pliron",
+        "scopes": {
+          "label": [
+            "entity.name.label.pliron"
+          ],
+          "namespace": [
+            "entity.name.namespace.pliron"
+          ],
+          "macro": [
+            "entity.name.function.macro.pliron"
+          ]
+        }
+      }
+    ],
+    "configuration": {
+      "title": "pliron",
+      "properties": {
+        "pliron.server.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Path to the `pliron-lsp` executable. By default the binary bundled with the extension is used, then `target/{release,debug}/pliron-lsp` in a trusted workspace, `~/.cargo/bin` and `PATH`. `${workspaceFolder}`, `${userHome}` and `~` are expanded."
+        },
+        "pliron.engine.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Use dialect engines (real pliron parsers) for exact diagnostics, types and navigation. When disabled only the dialect-agnostic syntax layer is used."
+        },
+        "pliron.engine.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Use this engine binary for every document instead of building dialect engines automatically."
+        },
+        "pliron.bundles.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically build a dialect engine for cargo projects that define pliron dialects (and rebuild it when their sources change)."
+        },
+        "pliron.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication with the language server."
+        },
+        "pliron.server.extraEnv": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "default": null,
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra environment variables for the server (and the `cargo` builds of dialect engines it runs), e.g. `LLVM_SYS_211_PREFIX`."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "pliron.restartServer",
+        "title": "Restart Server",
+        "category": "pliron",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "pliron.stopServer",
+        "title": "Stop Server",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.startServer",
+        "title": "Start Server",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.rebuildEngine",
+        "title": "Rebuild Dialect Engine",
+        "category": "pliron",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "pliron.showStatus",
+        "title": "Show Status",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.viewEngineModel",
+        "title": "View Engine Model",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.viewSyntaxTree",
+        "title": "View Syntax Tree",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.showRegistry",
+        "title": "Show Dialect Registry",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.openBundleManifest",
+        "title": "Open Generated Bundle Manifest",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.showLogs",
+        "title": "Show Logs",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.serverVersion",
+        "title": "Show Server Version",
+        "category": "pliron"
+      },
+      {
+        "command": "pliron.openMenu",
+        "title": "Open Menu",
+        "category": "pliron"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "pliron.viewEngineModel",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.viewSyntaxTree",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.showRegistry",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.openBundleManifest",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.openMenu",
+          "when": "false"
+        }
+      ]
+    },
+    "configurationDefaults": {
+      "[pliron]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.inlayHints.enabled": "on",
+        "editor.wordBasedSuggestions": "off"
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0",
+    "@types/mocha": "^10.0.0",
+    "mocha": "^10.4.0",
+    "@vscode/test-electron": "^3.1.0"
+  },
+  "keywords": [
+    "pliron",
+    "IR",
+    "MLIR",
+    "compiler",
+    "dialect"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/montaglue/pliron-lsp"
+  }
+}

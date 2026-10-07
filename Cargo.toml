@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pliron-lsp-protocol",
+    "crates/pliron-ir-syntax",
+    "crates/pliron-lsp-engine",
+    "crates/pliron-lsp-engine-ref",
+    "crates/pliron-lsp",
+    "xtask",
+]
+# The spike has its own standalone workspaces.
+exclude = ["spike", "third_party", "examples"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/montaglue/pliron-lsp"
+
+[workspace.dependencies]
+pliron-lsp-protocol = { path = "crates/pliron-lsp-protocol" }
+pliron-ir-syntax = { path = "crates/pliron-ir-syntax" }
+pliron-lsp-engine = { path = "crates/pliron-lsp-engine" }
+
+pliron = "0.18"
+pliron-llvm = { version = "0.18", default-features = false }
+
+anyhow = "1"
+blake3 = "1"
+cargo_metadata = "0.19"
+crossbeam-channel = "0.5"
+expect-test = "1.5"
+lsp-server = "0.7.9"
+lsp-types = "=0.95.1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+semver = "1"
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# pliron-lsp's instrumented pliron (parse events + error recovery), see
+# third_party/README.md. Generated dialect bundles patch it in the same way.
+[patch.crates-io]
+pliron = { path = "third_party/pliron-0.18.0" }
+pliron-derive = { path = "third_party/pliron-derive-0.18.0" }

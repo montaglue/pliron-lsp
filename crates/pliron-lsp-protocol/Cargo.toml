@@ -1,0 +1,13 @@
+[package]
+name = "pliron-lsp-protocol"
+description = "Wire protocol between the pliron-lsp frontend and its dialect engines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# NOTE: this crate's sources are embedded into generated dialect bundles,
+# so it must only depend on serde + serde_json.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

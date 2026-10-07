@@ -1,0 +1,24 @@
+[package]
+name = "pliron-lsp-spike-driver"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "native"
+path = "src/bin/native.rs"
+
+[dependencies]
+pliron = "=0.18.0"
+pliron-llvm = { version = "=0.18.0", default-features = false }
+
+# Standalone: not part of any enclosing workspace.
+[workspace]
+
+[patch.crates-io]
+pliron = { path = "../vendor/pliron-0.18.0" }
+pliron-derive = { path = "../vendor/pliron-derive-0.18.0" }
+pliron-llvm = { path = "../vendor/pliron-llvm-0.18.0" }

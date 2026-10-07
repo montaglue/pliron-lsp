@@ -1,0 +1,18 @@
+[package]
+name = "pliron-lsp-engine"
+description = "Dialect engine for pliron-lsp: parses IR with real pliron and reports a model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# NOTE: this crate's sources are embedded into generated dialect bundles,
+# so it must only depend on pliron, pliron-lsp-protocol and serde_json.
+# It requires pliron-lsp's instrumented pliron (`pliron::lsp`).
+[dependencies]
+pliron.workspace = true
+pliron-lsp-protocol.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+pliron-llvm.workspace = true
