@@ -20,10 +20,7 @@ async function main() {
   // A throwaway workspace with a pliron file, using the server built in
   // this repository (or $PLIRON_LSP_SERVER).
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "pliron-vscode-"));
-  fs.copyFileSync(
-    path.join(extensionDevelopmentPath, "test-fixtures", "demo.pliron"),
-    path.join(ws, "demo.pliron")
-  );
+  fs.cpSync(path.join(extensionDevelopmentPath, "test-fixtures"), ws, { recursive: true });
   const server =
     process.env.PLIRON_LSP_SERVER ??
     path.resolve(extensionDevelopmentPath, "../../target/debug/pliron-lsp");

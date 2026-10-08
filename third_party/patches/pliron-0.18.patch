@@ -1,0 +1,1331 @@
+diff -ruN a/pliron-derive/src/derive_format.rs b/pliron-derive/src/derive_format.rs
+--- a/pliron-derive/src/derive_format.rs	2026-10-07 20:37:03
++++ b/pliron-derive/src/derive_format.rs	2026-10-07 20:37:03
+@@ -739,7 +739,7 @@
+     fn build_lit(_input: &FmtInput, lit: &str, _state: &mut State) -> TokenStream {
+         let trimmed_lit = lit.trim();
+         quote! {
+-            ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#trimmed_lit))
++            ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#trimmed_lit))
+             .parse_stream(state_stream)
+             .into_result()?;
+         }
+@@ -976,7 +976,7 @@
+             };
+             let labelled_parser = if let Some(label) = &label {
+                 quote! {
+-                    (::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#label))
++                    (::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#label))
+                         .skip(::pliron::combine::parser::char::char(':').skip(::pliron::combine::parser::char::spaces())))
+                         .with(#value_parser)
+                 }
+@@ -986,8 +986,8 @@
+             let delimited_labelled_parser = if let Some((open, close)) = &delimiters {
+                 quote! {
+                     ::pliron::combine::parser::sequence::between(
+-                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#open)),
+-                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#close)),
++                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#open)),
++                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#close)),
+                         #labelled_parser
+                     )
+                 }
+@@ -1497,7 +1497,7 @@
+             };
+             let labelled_parser = if let Some(label) = &label_opt {
+                 quote! {
+-                (::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#label))
++                (::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#label))
+                     .skip(::pliron::combine::parser::char::char(':').skip(::pliron::combine::parser::char::spaces()))).with(#attr_parser)
+                 }
+             } else {
+@@ -1506,8 +1506,8 @@
+             let delimited_labelled_parser = if let Some((open, close)) = &delimiters_opt {
+                 quote! {
+                     ::pliron::combine::parser::sequence::between(
+-                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#open)),
+-                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#close)),
++                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#open)),
++                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#close)),
+                         #labelled_parser
+                     )
+                 }
+diff -ruN a/src/attribute.rs b/src/attribute.rs
+--- a/src/attribute.rs	2026-10-07 20:37:03
++++ b/src/attribute.rs	2026-10-07 20:37:03
+@@ -41,7 +41,7 @@
+ 
+ use crate::{
+     builtin::attr_interfaces::{OutlinedAttr, TypedAttrInterface},
+-    combine::{Parser, parser, token},
++    combine::{Parser, parser, parser::char::spaces, token},
+     common_traits::Verify,
+     context::{Context, collect_deduped_interface_verifiers},
+     dialect::{Dialect, DialectName},
+@@ -104,10 +104,26 @@
+         state_stream: &mut StateStream<'a>,
+         _arg: Self::Arg,
+     ) -> ParseResult<'a, Self::Parsed> {
+-        (Identifier::parser(()), spaced(token(':')), attr_parser())
+-            .map(|(key, _, val)| (key, val))
++        let start = combine::Positioned::position(state_stream);
++        let res = (
++            Identifier::parser(()),
++            crate::lsp::position(),
++            spaced(token(':')),
++            attr_parser(),
++        )
++            .map(|(key, end, _, val)| ((key, val), end))
+             .parse_stream(state_stream)
+-            .into_result()
++            .into_result();
++        match res {
++            Ok(((kv, end), c)) => {
++                crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::AttrKey {
++                    start,
++                    end,
++                });
++                Ok((kv, c))
++            }
++            Err(e) => Err(e),
++        }
+     }
+ }
+ 
+@@ -367,9 +383,15 @@
+         _arg: Self::Arg,
+     ) -> ParseResult<'a, Self::Parsed> {
+         let loc = state_stream.loc();
+-        let attr_id_parser = spaced(AttrId::parser(()));
++        let attr_id_parser = spaces()
++            .with((
++                crate::lsp::position(),
++                AttrId::parser(()),
++                crate::lsp::position(),
++            ))
++            .skip(spaces());
+ 
+-        let mut attr_parser = attr_id_parser.then(move |attr_id: AttrId| {
++        let mut attr_parser = attr_id_parser.then(move |(start, attr_id, id_end): (_, AttrId, _)| {
+             let loc = loc.clone();
+             combine::parser(move |parsable_state: &mut StateStream<'a>| {
+                 let state = &parsable_state.state;
+@@ -378,14 +400,23 @@
+                     .dialects
+                     .get(&attr_id.dialect)
+                     .expect("Dialect name parsed but dialect isn't registered");
+-                let Some(attr_parser) = dialect.attributes.get(&attr_id) else {
++                let Some(attr_parser) = dialect.attributes.get(&attr_id).copied() else {
+                     input_err!(
+                         loc.clone(),
+                         "Unregistered attribute {}",
+                         attr_id.disp(state.ctx)
+                     )?
+                 };
+-                attr_parser(parsable_state, &())
++                let res = attr_parser(parsable_state, &());
++                if res.is_ok() {
++                    let end = combine::Positioned::position(parsable_state);
++                    crate::lsp::record(&mut parsable_state.state, || crate::lsp::Event::Attr {
++                        start,
++                        id_end,
++                        end,
++                    });
++                }
++                res
+             })
+         });
+ 
+diff -ruN a/src/basic_block.rs b/src/basic_block.rs
+--- a/src/basic_block.rs	2026-10-07 20:37:03
++++ b/src/basic_block.rs	2026-10-07 20:37:03
+@@ -521,8 +521,14 @@
+         // after consuming the label+args are reported as committed errors.
+         // Format: ^label(args) [optional_attrs] [!N]:
+         let outline_loc = state_stream.loc();
+-        let (label, args, attrs_opt, outindex_opt) = (
+-            spaced(token('^').with(Identifier::parser(()))),
++        let ((label_start, label, label_end), args, attrs_opt, outindex_opt) = (
++            spaces()
++                .with((
++                    crate::lsp::position(),
++                    token('^').with(Identifier::parser(())),
++                    crate::lsp::position(),
++                ))
++                .skip(spaces()),
+             spaced(delimited_list_parser('(', ')', ',', block_arg)),
+             spaced(optional(AttributeDict::parser(()))),
+             spaces().with(optional(token('!').with(usize::parser(())))),
+@@ -546,8 +552,25 @@
+             block.deref_mut(state_stream.state.ctx).attributes = attrs;
+         }
+ 
++        crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::BlockLabel {
++            block,
++            start: label_start,
++            end: label_end,
++        });
++
+         for (arg_idx, (arg_loc, name)) in arg_names.into_iter().enumerate() {
+             let def: Value = block.deref(state_stream.state.ctx).args[arg_idx].as_value(block);
++            if let crate::location::Location::SrcPos { pos, .. } = &arg_loc {
++                let (start, mut end) = (*pos, *pos);
++                end.column += alloc::string::ToString::to_string(&name).chars().count() as i32;
++                crate::lsp::record(&mut state_stream.state, || {
++                    crate::lsp::Event::BlockArgDef {
++                        value: def,
++                        start,
++                        end,
++                    }
++                });
++            }
+             state_stream.state.name_tracker.ssa_def(
+                 state_stream.state.ctx,
+                 &(name.clone(), arg_loc),
+@@ -567,21 +590,94 @@
+             .block_def(state_stream.state.ctx, &(label, loc), block)?;
+ 
+         // Parse the ops in the block
+-        let ops: Vec<_> = spaces()
+-            .with(sep_by::<Vec<_>, _, _, _>(
+-                Operation::parser(OperationParserConfig {
+-                    look_for_outlined_attrs: false,
+-                })
+-                .skip(spaces()),
+-                token(';').skip(spaces()),
+-            ))
+-            .parse_stream(state_stream)
+-            .into_result()?
+-            .0;
++        let ops: Vec<_> = if crate::lsp::recovering(&state_stream.state) {
++            parse_ops_recovering(state_stream)
++        } else {
++            spaces()
++                .with(sep_by::<Vec<_>, _, _, _>(
++                    Operation::parser(OperationParserConfig {
++                        look_for_outlined_attrs: false,
++                    })
++                    .skip(spaces()),
++                    token(';').skip(spaces()),
++                ))
++                .parse_stream(state_stream)
++                .into_result()?
++                .0
++        };
+         for op in ops {
+             op.insert_at_back(block, state_stream.state.ctx);
+         }
+ 
+         Ok(block).into_parse_result()
+     }
++}
++
++/// pliron-lsp: parse the operations of a block, recovering from errors.
++fn parse_ops_recovering(state_stream: &mut parsable::StateStream<'_>) -> Vec<Ptr<Operation>> {
++    use crate::combine::Positioned;
++    use crate::lsp::{
++        Sync, at_line_start, peek_char, record_error, recover_from, skip_spaces, skip_to_sync,
++    };
++
++    let mut ops = Vec::new();
++    skip_spaces(state_stream);
++    loop {
++        match peek_char(state_stream) {
++            None | Some('}') | Some('^') => break,
++            _ => {}
++        }
++        let res = Operation::parser(OperationParserConfig {
++            look_for_outlined_attrs: false,
++        })
++        .parse_stream(state_stream)
++        .into_result();
++        match recover_from(state_stream, res, true) {
++            Ok(op) => {
++                ops.push(op);
++                skip_spaces(state_stream);
++                let crossed = at_line_start(state_stream);
++                let pos = state_stream.position();
++                match peek_char(state_stream) {
++                    Some(';') => {
++                        let _ = crate::combine::StreamOnce::uncons(state_stream);
++                        skip_spaces(state_stream);
++                        let pos = state_stream.position();
++                        if matches!(peek_char(state_stream), None | Some('}') | Some('^')) {
++                            record_error(
++                                state_stream,
++                                pos,
++                                "expected an operation after `;` (`;` only separates operations)"
++                                    .into(),
++                            );
++                            break;
++                        }
++                    }
++                    None | Some('}') | Some('^') => break,
++                    Some(_) if crossed => {
++                        record_error(state_stream, pos, "expected `;` between operations".into());
++                    }
++                    Some(_) => {
++                        record_error(state_stream, pos, "unexpected input after operation".into());
++                        match skip_to_sync(state_stream, false, true) {
++                            Sync::Semicolon | Sync::NewOp => {
++                                skip_spaces(state_stream);
++                            }
++                            Sync::BlockHeader | Sync::CloseBrace | Sync::Eof => break,
++                        }
++                    }
++                }
++            }
++            Err(sync) => {
++                crate::lsp::define_placeholders(state_stream);
++                match sync {
++                    Sync::Semicolon | Sync::NewOp => {
++                        skip_spaces(state_stream);
++                    }
++                    Sync::BlockHeader | Sync::CloseBrace | Sync::Eof => break,
++                }
++            }
++        }
++    }
++    ops
+ }
+diff -ruN a/src/irfmt/outlined.rs b/src/irfmt/outlined.rs
+--- a/src/irfmt/outlined.rs	2026-10-07 20:37:03
++++ b/src/irfmt/outlined.rs	2026-10-07 20:37:03
+@@ -425,8 +425,11 @@
+ 
+     for ((outindex_loc, outindex), (loc_opt, named_attrs)) in loc_and_outline_entries {
+         // Check if this index refers to an operation or a block.
++        let keep_parsed_locations = crate::lsp::keep_parsed_locations(&state_stream.state);
+         if let Some(opr) = parse_state.outindex_op_map.remove(&outindex) {
+-            if let Some(loc) = loc_opt {
++            if let Some(loc) = loc_opt
++                && !keep_parsed_locations
++            {
+                 opr.deref_mut(state_stream.state.ctx).set_loc(loc);
+             }
+             for (name, attr_or_ref) in named_attrs {
+@@ -454,7 +457,9 @@
+                 }
+             }
+         } else if let Some(block) = parse_state.outindex_block_map.remove(&outindex) {
+-            if let Some(loc) = loc_opt {
++            if let Some(loc) = loc_opt
++                && !keep_parsed_locations
++            {
+                 block.deref_mut(state_stream.state.ctx).set_loc(loc);
+             }
+             for (name, attr_or_ref) in named_attrs {
+diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
+--- a/src/irfmt/parsers.rs	2026-10-07 20:37:03
++++ b/src/irfmt/parsers.rs	2026-10-07 20:37:03
+@@ -8,10 +8,11 @@
+ use crate::{
+     arg_err,
+     attribute::AttrObj,
++    input_err,
+     basic_block::BasicBlock,
+     builtin::given_names::set_operation_result_name,
+     combine::{
+-        Parser, Stream, any, between, many, many1, none_of, optional,
++        Parser, Positioned, Stream, any, between, many, many1, none_of, optional,
+         parser::char::{digit, spaces},
+         sep_by, token,
+     },
+@@ -254,13 +255,21 @@
+ /// the SSA operands of an [Operation]. If the SSA value hasn't been defined yet,
+ /// a [forward reference](crate::builtin::ops::ForwardRefOp) is returned.
+ pub fn ssa_opd_parse<'a>(state_stream: &mut StateStream<'a>, _arg: ()) -> ParseResult<'a, Value> {
++    let start = state_stream.position();
+     Identifier::parser(())
+         .parse_stream(state_stream)
+         .map(|opd| {
+-            state_stream
++            let value = state_stream
+                 .state
+                 .name_tracker
+-                .ssa_use(state_stream.state.ctx, &opd)
++                .ssa_use(state_stream.state.ctx, &opd);
++            let end = state_stream.position();
++            crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::OperandUse {
++                value,
++                start,
++                end,
++            });
++            value
+         })
+         .into()
+ }
+@@ -279,14 +288,22 @@
+     state_stream: &mut StateStream<'a>,
+     _arg: (),
+ ) -> ParseResult<'a, Ptr<BasicBlock>> {
++    let start = state_stream.position();
+     token('^')
+         .with(Identifier::parser(()))
+         .parse_stream(state_stream)
+         .map(|opd| {
+-            state_stream
++            let block = state_stream
+                 .state
+                 .name_tracker
+-                .block_use(state_stream.state.ctx, &opd)
++                .block_use(state_stream.state.ctx, &opd);
++            let end = state_stream.position();
++            crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::SuccessorUse {
++                block,
++                start,
++                end,
++            });
++            block
+         })
+         .into()
+ }
+@@ -306,16 +323,37 @@
+     op: Ptr<Operation>,
+ ) -> Result<()> {
+     let ctx = &mut state_stream.state.ctx;
+-    assert!(
+-        results.len() == op.deref(ctx).get_num_results(),
+-        "Error processing parsed SSA definitions. Result count mismatch"
+-    );
++    let num_results = op.deref(ctx).get_num_results();
++    if results.len() != num_results {
++        // pliron-lsp: report a user error instead of panicking.
++        let loc = results
++            .first()
++            .map(|(_, loc)| loc.clone())
++            .unwrap_or_else(|| op.deref(ctx).loc());
++        return input_err!(
++            loc,
++            "{} result name(s) given, but this operation has {} result(s)",
++            results.len(),
++            num_results
++        );
++    }
+ 
+     let name_tracker = &mut state_stream.state.name_tracker;
+     for (idx, name_loc) in results.iter().enumerate() {
+         let res = op.deref(ctx).get_result(idx);
+         name_tracker.ssa_def(ctx, name_loc, res)?;
+         set_operation_result_name(ctx, op, idx, Some(name_loc.0.clone()));
++        if let (Some(r), crate::location::Location::SrcPos { pos, .. }) =
++            (name_tracker.recorder.as_deref_mut(), &name_loc.1)
++        {
++            let mut end = *pos;
++            end.column += alloc::string::ToString::to_string(&name_loc.0).chars().count() as i32;
++            r.push(crate::lsp::Event::ResultDef {
++                value: res,
++                start: *pos,
++                end,
++            });
++        }
+     }
+     Ok(())
+ }
+diff -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2026-10-07 20:37:03
++++ b/src/lib.rs	2026-10-07 20:37:03
+@@ -47,6 +47,7 @@
+ pub mod irfmt;
+ pub mod linked_list;
+ pub mod location;
++pub mod lsp;
+ pub mod op;
+ pub mod operation;
+ pub mod opts;
+diff -ruN a/src/lsp.rs b/src/lsp.rs
+--- a/src/lsp.rs	1970-01-01 02:00:00
++++ b/src/lsp.rs	2026-10-07 20:37:03
+@@ -0,0 +1,546 @@
++//! Parse instrumentation for language tooling (pliron-lsp).
++//!
++//! When enabled through [`parse_recorded`], the parser records the source
++//! span of every entity it parses (operations, op names, results, operand
++//! uses, successors, block labels and arguments, types, attributes,
++//! attribute keys, format keywords and regions) and can optionally recover
++//! from errors: a failing operation is recorded, the input is skipped to the
++//! next `;`, block header or closing `}`, and parsing continues.
++//!
++//! None of this is active during normal parsing: the recorder lives in the
++//! parser's name tracker and is `None` unless [`parse_recorded`] installs it.
++
++use alloc::{boxed::Box, format, string::String, string::ToString, vec::Vec};
++
++use crate::{
++    basic_block::BasicBlock,
++    builtin::{op_interfaces::OneResultInterface, ops::ForwardRefOp},
++    combine::{
++        Parser, Positioned, StreamOnce,
++        stream::{ResetStream, position::SourcePosition},
++    },
++    context::{Context, Ptr},
++    identifier::Identifier,
++    irfmt::parsers::spaced,
++    location::{Location, Source},
++    operation::Operation,
++    parsable::{ParseResult, State, StateStream, state_stream_from_iterator},
++    r#type::TypeHandle,
++    region::Region,
++    result::Result,
++    value::Value,
++};
++
++/// Options for [`parse_recorded`].
++#[derive(Clone, Copy, Debug)]
++pub struct RecordOptions {
++    /// Recover from errors inside blocks and regions.
++    pub recover: bool,
++    /// Do not overwrite parsed locations with locations recorded in the
++    /// `outlined_attributes:` section (keeps positions pointing into the
++    /// text being parsed).
++    pub keep_parsed_locations: bool,
++}
++
++impl Default for RecordOptions {
++    fn default() -> Self {
++        RecordOptions {
++            recover: true,
++            keep_parsed_locations: true,
++        }
++    }
++}
++
++/// A recorded parse event. Positions are `combine` source positions
++/// (1-based line, 1-based column counted in chars). `end` positions are
++/// exclusive.
++#[derive(Clone, Debug)]
++pub enum Event {
++    /// An operation was parsed successfully.
++    Op {
++        op: Ptr<Operation>,
++        start: SourcePosition,
++        opid_start: SourcePosition,
++        opid_end: SourcePosition,
++        end: SourcePosition,
++    },
++    /// An operation failed to parse; recovery skipped to `end`.
++    OpError {
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// Definition of an op result.
++    ResultDef {
++        value: Value,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// Use of an SSA value as an operand.
++    OperandUse {
++        value: Value,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// Use of a block as a successor (`^label`).
++    SuccessorUse {
++        block: Ptr<BasicBlock>,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// Definition of a block label (`^label` in a block header).
++    BlockLabel {
++        block: Ptr<BasicBlock>,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// Definition of a block argument.
++    BlockArgDef {
++        value: Value,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// A type (`dialect.type` and its contents).
++    Type {
++        ty: TypeHandle,
++        start: SourcePosition,
++        id_end: SourcePosition,
++        end: SourcePosition,
++    },
++    /// An attribute (`dialect.attr` and its contents).
++    Attr {
++        start: SourcePosition,
++        id_end: SourcePosition,
++        end: SourcePosition,
++    },
++    /// A key in an attribute dictionary.
++    AttrKey {
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// A literal keyword of a declarative (derived) format.
++    Keyword {
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// A token marked by a hand-written parser with [`token`]; `kind` is a
++    /// semantic token type name (`"keyword"`, `"number"`, ...).
++    Token {
++        kind: &'static str,
++        start: SourcePosition,
++        end: SourcePosition,
++    },
++    /// A region (`{ ... }`).
++    Region {
++        region: Option<Ptr<Region>>,
++        open: SourcePosition,
++        close: Option<SourcePosition>,
++    },
++}
++
++/// An error recorded during recovering parsing.
++#[derive(Clone, Debug)]
++pub struct RecordedError {
++    pub pos: SourcePosition,
++    pub message: String,
++}
++
++/// Everything recorded during [`parse_recorded`].
++#[derive(Default, Debug)]
++pub struct Recording {
++    pub events: Vec<Event>,
++    pub errors: Vec<RecordedError>,
++}
++
++#[derive(Default)]
++pub(crate) struct Recorder {
++    pub(crate) events: Vec<Event>,
++    pub(crate) errors: Vec<RecordedError>,
++    pub(crate) recover: bool,
++    pub(crate) keep_parsed_locations: bool,
++    /// Result names of the most recent operation that failed to parse (set
++    /// by `Operation::parse`, consumed by recovery to define placeholders).
++    pub(crate) failed_results: Option<Vec<(Identifier, Location)>>,
++    /// Values that stand in for results of operations that failed to parse.
++    pub(crate) placeholders: Vec<Value>,
++    /// The input text, to answer "is this position at the start of a line?"
++    /// independently of how much whitespace parsers consumed.
++    pub(crate) lines: Vec<Vec<char>>,
++}
++
++impl Recorder {
++    pub(crate) fn push(&mut self, ev: Event) {
++        self.events.push(ev);
++    }
++
++    /// A forward reference was resolved: retarget recorded uses.
++    pub(crate) fn forward_value_resolved(&mut self, fref: Value, def: Value) {
++        for ev in &mut self.events {
++            if let Event::OperandUse { value, .. } = ev
++                && *value == fref
++            {
++                *value = def;
++            }
++        }
++    }
++
++    /// A forward block reference was resolved: retarget recorded uses.
++    pub(crate) fn forward_block_resolved(&mut self, fref: Ptr<BasicBlock>, def: Ptr<BasicBlock>) {
++        for ev in &mut self.events {
++            if let Event::SuccessorUse { block, .. } = ev
++                && *block == fref
++            {
++                *block = def;
++            }
++        }
++    }
++
++    /// Positions where `value` is used (for diagnostics).
++    pub(crate) fn uses_of_value(&self, v: Value) -> Vec<SourcePosition> {
++        self.events
++            .iter()
++            .filter_map(|e| match e {
++                Event::OperandUse { value, start, .. } if *value == v => Some(*start),
++                _ => None,
++            })
++            .collect()
++    }
++
++    pub(crate) fn uses_of_block(&self, b: Ptr<BasicBlock>) -> Vec<SourcePosition> {
++        self.events
++            .iter()
++            .filter_map(|e| match e {
++                Event::SuccessorUse { block, start, .. } if *block == b => Some(*start),
++                _ => None,
++            })
++            .collect()
++    }
++}
++
++/// The active recorder, if any.
++pub(crate) fn recorder<'s>(state: &'s mut State<'_>) -> Option<&'s mut Recorder> {
++    state.name_tracker.recorder.as_deref_mut()
++}
++
++/// Record an event if recording is active.
++pub(crate) fn record(state: &mut State<'_>, ev: impl FnOnce() -> Event) {
++    if let Some(r) = recorder(state) {
++        r.push(ev());
++    }
++}
++
++/// Is recovering parsing active?
++pub(crate) fn recovering(state: &State<'_>) -> bool {
++    state
++        .name_tracker
++        .recorder
++        .as_ref()
++        .is_some_and(|r| r.recover)
++}
++
++/// Should parsed locations be kept (not overwritten by outlined ones)?
++pub(crate) fn keep_parsed_locations(state: &State<'_>) -> bool {
++    state
++        .name_tracker
++        .recorder
++        .as_ref()
++        .is_some_and(|r| r.keep_parsed_locations)
++}
++
++/// Parse `input` as a top-level operation while recording parse events.
++///
++/// Returns the parse result (in recovering mode this is `Ok` as long as the
++/// top-level operation itself could be parsed) and the recording.
++pub fn parse_recorded(
++    ctx: &mut Context,
++    input: &str,
++    opts: RecordOptions,
++) -> (Result<Ptr<Operation>>, Recording) {
++    let mut state = State::new(ctx, Source::InMemory);
++    state.name_tracker.recorder = Some(Box::new(Recorder {
++        recover: opts.recover,
++        keep_parsed_locations: opts.keep_parsed_locations,
++        lines: input.split('\n').map(|l| l.chars().collect()).collect(),
++        ..Recorder::default()
++    }));
++    let mut stream = state_stream_from_iterator(input.chars(), state);
++    let res = spaced(Operation::top_level_parser())
++        .parse_stream(&mut stream)
++        .into_result();
++    let rec = stream
++        .state
++        .name_tracker
++        .recorder
++        .take()
++        .map(|r| *r)
++        .unwrap_or_default();
++    let recording = Recording {
++        events: rec.events,
++        errors: rec.errors,
++    };
++    let res = match res {
++        Ok((op, _)) => Ok(op),
++        Err(err) => {
++            let (pos, msg) = describe_error(err.into_inner().error);
++            let loc = Location::SrcPos {
++                src: Source::InMemory,
++                pos,
++            };
++            crate::input_err!(loc, ParseFailure(msg))
++        }
++    };
++    (res, recording)
++}
++
++/// A combine parse failure, as a pliron error.
++#[derive(Debug, thiserror::Error)]
++#[error("{0}")]
++pub struct ParseFailure(pub String);
++
++/// A parser that returns the current position and consumes nothing.
++pub fn position<'a>() -> impl Parser<StateStream<'a>, Output = SourcePosition, PartialState = ()> + 'a
++{
++    crate::combine::parser(|state_stream: &mut StateStream<'a>| {
++        crate::combine::ParseResult::PeekOk(state_stream.position()).into()
++    })
++}
++
++/// Parse a literal keyword (like `combine::parser::char::string`) and record
++/// it as a [`Event::Keyword`]. Used by derived (declarative) formats.
++pub fn keyword<'a>(
++    lit: &'static str,
++) -> impl Parser<StateStream<'a>, Output = &'static str, PartialState = ()> + 'a {
++    crate::combine::parser(move |state_stream: &mut StateStream<'a>| {
++        let start = state_stream.position();
++        let res = crate::combine::parser::char::string(lit)
++            .parse_stream(state_stream)
++            .into_result();
++        if res.is_ok() {
++            let end = state_stream.position();
++            record(&mut state_stream.state, || Event::Keyword { start, end });
++        }
++        res
++    })
++}
++
++/// Run `parser` and record what it consumed as an [`Event::Token`] of the
++/// given semantic kind. For hand-written parsers that want their syntax
++/// highlighted; behaves exactly like `parser` otherwise.
++pub fn token<'a, P>(
++    kind: &'static str,
++    mut parser: P,
++) -> impl Parser<StateStream<'a>, Output = P::Output, PartialState = ()> + 'a
++where
++    P: Parser<StateStream<'a>> + 'a,
++{
++    crate::combine::parser(move |state_stream: &mut StateStream<'a>| {
++        let start = state_stream.position();
++        let res = parser.parse_stream(state_stream).into_result();
++        if res.is_ok() {
++            let end = state_stream.position();
++            record(&mut state_stream.state, || Event::Token { kind, start, end });
++        }
++        res
++    })
++}
++
++/// Record an error during recovering parsing.
++pub(crate) fn record_error(state_stream: &mut StateStream<'_>, pos: SourcePosition, message: String) {
++    if let Some(r) = recorder(&mut state_stream.state) {
++        // Avoid duplicates at the same position.
++        if r.errors.iter().any(|e| e.pos == pos && e.message == message) {
++            return;
++        }
++        r.errors.push(RecordedError { pos, message });
++    }
++}
++
++/// Turn a combine error into (position, message).
++pub(crate) fn describe_error(
++    err: crate::combine::easy::Errors<char, char, SourcePosition>,
++) -> (SourcePosition, String) {
++    let pos = err.position;
++    let mut msg = err.to_string();
++    // combine prefixes "Parse error at line: L, column: C"; drop it.
++    if let Some(rest) = msg.strip_prefix("Parse error at ")
++        && let Some(nl) = rest.find('\n')
++    {
++        msg = rest[nl + 1..].trim().to_string();
++    }
++    // pliron errors carry their own location prefix.
++    let msg = msg
++        .lines()
++        .filter(|l| !l.trim().is_empty())
++        .map(|l| l.trim())
++        .collect::<Vec<_>>()
++        .join("\n");
++    let msg = match msg.find("] ") {
++        Some(i) if msg.starts_with("[<in-memory>") => msg[i + 2..].to_string(),
++        _ => msg,
++    };
++    (pos, msg)
++}
++
++/// Where recovery stopped.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Sync {
++    /// A `;` was consumed; the next operation follows.
++    Semicolon,
++    /// A new operation starts at the beginning of a line (no `;`).
++    NewOp,
++    /// A block header (`^...`) starts at the beginning of a line.
++    BlockHeader,
++    /// A `}` that closes the enclosing region (not consumed).
++    CloseBrace,
++    /// End of input.
++    Eof,
++}
++
++fn peek(s: &mut StateStream<'_>) -> Option<char> {
++    let cp = s.checkpoint();
++    let c = s.uncons().ok();
++    let _ = s.reset(cp);
++    c
++}
++
++fn bump(s: &mut StateStream<'_>) {
++    let _ = s.uncons();
++}
++
++/// Skip input after an error until a synchronisation point.
++///
++/// `at_line_start` tells whether the current position is at the start of a
++/// line (only whitespace before it). Braces are tracked so that nested
++/// regions of a broken operation are skipped as a whole; a `}` in the middle
++/// of a line that does not match an opened `{` is assumed to close a group
++/// opened before the error and is ignored.
++pub(crate) fn skip_to_sync(s: &mut StateStream<'_>, mut at_line_start: bool, stop_at_new_op: bool) -> Sync {
++    let mut depth = 0u32;
++    loop {
++        let Some(c) = peek(s) else {
++            return Sync::Eof;
++        };
++        if c == '\n' {
++            bump(s);
++            at_line_start = true;
++            continue;
++        }
++        if c.is_whitespace() {
++            bump(s);
++            continue;
++        }
++        if at_line_start && depth == 0 {
++            if c == '}' {
++                return Sync::CloseBrace;
++            }
++            if c == '^' {
++                return Sync::BlockHeader;
++            }
++            if stop_at_new_op && (c.is_alphabetic() || c == '_') {
++                return Sync::NewOp;
++            }
++        }
++        at_line_start = false;
++        bump(s);
++        match c {
++            '"' => {
++                // Skip a string literal.
++                while let Some(c) = peek(s) {
++                    bump(s);
++                    if c == '\\' {
++                        bump(s);
++                    } else if c == '"' {
++                        break;
++                    }
++                }
++            }
++            ';' if depth == 0 => return Sync::Semicolon,
++            '{' => depth += 1,
++            '}' => depth = depth.saturating_sub(1),
++            _ => {}
++        }
++    }
++}
++
++/// Skip whitespace; returns whether a newline was crossed (or the position
++/// was already at the start of a line).
++pub(crate) fn skip_spaces(s: &mut StateStream<'_>) -> bool {
++    let mut crossed = s.position().column == 1;
++    while let Some(c) = peek(s) {
++        if !c.is_whitespace() {
++            break;
++        }
++        if c == '\n' {
++            crossed = true;
++        }
++        bump(s);
++    }
++    crossed
++}
++
++/// Is the current position preceded only by whitespace on its line?
++pub(crate) fn at_line_start(s: &mut StateStream<'_>) -> bool {
++    let pos = s.position();
++    let Some(r) = s.state.name_tracker.recorder.as_deref() else {
++        return pos.column == 1;
++    };
++    let Some(line) = r.lines.get((pos.line - 1).max(0) as usize) else {
++        return true;
++    };
++    line.iter()
++        .take((pos.column - 1).max(0) as usize)
++        .all(|c| c.is_whitespace())
++}
++
++/// Peek the next non-space character without consuming it.
++pub(crate) fn peek_char(s: &mut StateStream<'_>) -> Option<char> {
++    peek(s)
++}
++
++/// Define placeholder values for the results of an operation that failed to
++/// parse, so that later uses do not cascade into "unresolved" errors.
++pub(crate) fn define_placeholders(state_stream: &mut StateStream<'_>) {
++    let Some(results) = recorder(&mut state_stream.state).and_then(|r| r.failed_results.take())
++    else {
++        return;
++    };
++    for name_loc in results {
++        let ctx = &mut *state_stream.state.ctx;
++        let placeholder = ForwardRefOp::new(ctx).get_result(ctx);
++        if state_stream
++            .state
++            .name_tracker
++            .ssa_def(state_stream.state.ctx, &name_loc, placeholder)
++            .is_ok()
++            && let Some(r) = recorder(&mut state_stream.state)
++        {
++            r.placeholders.push(placeholder);
++        }
++    }
++}
++
++/// Run `parse` for a list item; on error, record it, recover, and report
++/// where recovery stopped. On success returns `Ok(output)`.
++pub(crate) fn recover_from<'a, T>(
++    state_stream: &mut StateStream<'a>,
++    res: ParseResult<'a, T>,
++    stop_at_new_op: bool,
++) -> core::result::Result<T, Sync> {
++    match res {
++        Ok((v, _)) => Ok(v),
++        Err(e) => {
++            let (pos, msg) = describe_error(e.into_inner().error);
++            record_error(state_stream, pos, msg);
++            // Never stop right where we are (that would not make progress).
++            Err(skip_to_sync(state_stream, false, stop_at_new_op))
++        }
++    }
++}
++
++/// Format an unresolved-reference message.
++pub(crate) fn unresolved_message(id: &Identifier, is_label: bool) -> String {
++    if is_label {
++        format!("Block label ^{id} is not defined in this region")
++    } else {
++        format!("Value {id} is not defined in this scope")
++    }
++}
+diff -ruN a/src/operation.rs b/src/operation.rs
+--- a/src/operation.rs	2026-10-07 20:37:03
++++ b/src/operation.rs	2026-10-07 20:37:03
+@@ -856,14 +856,23 @@
+             .source()
+             .expect("Location from Parsable must be Location::SrcPos");
+ 
++        let start = combine::Positioned::position(state_stream);
+         let results_opid = spaces()
+             .with(combine::optional(attempt(
+                 list_parser(',', (location(), Identifier::parser(()))).skip(spaced(token('='))),
+             )))
+-            .and(spaced(OpId::parser(())));
++            .and(
++                spaces()
++                    .with((
++                        crate::lsp::position(),
++                        OpId::parser(()),
++                        crate::lsp::position(),
++                    ))
++                    .skip(spaces()),
++            );
+ 
+         results_opid
+-            .then(|(results_opt, opid)| {
++            .then(|(results_opt, (opid_start, opid, opid_end))| {
+                 let loc = loc.clone();
+                 let results: Vec<_> = results_opt
+                     .unwrap_or(vec![])
+@@ -877,19 +886,45 @@
+                         .dialects
+                         .get(&opid.dialect)
+                         .expect("Dialect name parsed but dialect isn't registered");
+-                    let Some(opid_parser) = dialect.ops.get(&opid) else {
+-                        input_err!(loc.clone(), "Unregistered Op {}", opid.disp(state.ctx))?
++                    let Some(opid_parser) = dialect.ops.get(&opid).copied() else {
++                        if let Some(r) = crate::lsp::recorder(&mut parsable_state.state) {
++                            r.failed_results = Some(results.clone());
++                        }
++                        input_err!(
++                            loc.clone(),
++                            "Unregistered Op {}",
++                            opid.disp(parsable_state.state.ctx)
++                        )?
+                     };
+                     let op = opid_parser(parsable_state, results.clone())
+                         .map(|(op, c)| (op.get_operation(), c));
+ 
+-                    if let Ok((op, _)) = op {
+-                        // Set the location of the operation to be from where we just parsed it.
+-                        // If it has a different one specified as part of its outlined information,
+-                        // that will be overwritten with later.
+-                        op.deref_mut(parsable_state.state.ctx).set_loc(loc.clone());
+-                        // If there's an outline index, post-parse it.
+-                        postparse_outline(parsable_state, op)?;
++                    match &op {
++                        Ok((op, _)) => {
++                            let op = *op;
++                            // Set the location of the operation to be from where we just parsed it.
++                            // If it has a different one specified as part of its outlined information,
++                            // that will be overwritten with later.
++                            op.deref_mut(parsable_state.state.ctx).set_loc(loc.clone());
++                            // pliron-lsp: record the operation's span.
++                            let end = combine::Positioned::position(parsable_state);
++                            crate::lsp::record(&mut parsable_state.state, || {
++                                crate::lsp::Event::Op {
++                                    op,
++                                    start,
++                                    opid_start,
++                                    opid_end,
++                                    end,
++                                }
++                            });
++                            // If there's an outline index, post-parse it.
++                            postparse_outline(parsable_state, op)?;
++                        }
++                        Err(_) => {
++                            if let Some(r) = crate::lsp::recorder(&mut parsable_state.state) {
++                                r.failed_results = Some(results.clone());
++                            }
++                        }
+                     }
+ 
+                     if arg.look_for_outlined_attrs {
+diff -ruN a/src/parsable.rs b/src/parsable.rs
+--- a/src/parsable.rs	2026-10-07 20:37:03
++++ b/src/parsable.rs	2026-10-07 20:37:03
+@@ -397,6 +397,8 @@
+ pub(crate) struct NameTracker {
+     ssa_name_scope: Vec<IMap<Identifier, Value>>,
+     block_label_scope: Vec<IMap<Identifier, LabelRef>>,
++    /// Parse event recorder (pliron-lsp instrumentation), see [crate::lsp].
++    pub(crate) recorder: Option<Box<crate::lsp::Recorder>>,
+ }
+ 
+ #[derive(Error, Debug)]
+@@ -451,6 +453,9 @@
+                         Operation::get_op::<ForwardRefOp>(op, ctx).map(|op| op.get_result(ctx));
+                     if let Some(fref) = fref_opt {
+                         // If there's already a def and its a forward ref, replace that.
++                        if let Some(r) = self.recorder.as_deref_mut() {
++                            r.forward_value_resolved(fref, def);
++                        }
+                         fref.replace_some_uses_with(ctx, |_, _| true, &def);
+                         Operation::erase(op, ctx);
+                         occ.insert(def);
+@@ -511,6 +516,9 @@
+         match scope.entry(id.0.clone()) {
+             Entry::Occupied(mut occ) => match occ.get_mut() {
+                 LabelRef::ForwardRef(fref) => {
++                    if let Some(r) = self.recorder.as_deref_mut() {
++                        r.forward_block_resolved(*fref, block);
++                    }
+                     fref.retarget_some_preds_to(ctx, |_, _| true, block);
+                     BasicBlock::erase(*fref, ctx);
+                     occ.insert(LabelRef::Defined(block));
+@@ -567,6 +575,23 @@
+                 if let DefiningEntity::Op(op) = value.defining_entity()
+                     && Operation::is_op::<ForwardRefOp>(op, ctx)
+                 {
++                    if let Some(r) = self.recorder.as_deref_mut()
++                        && r.recover
++                    {
++                        // Report at every use; placeholders for results of
++                        // failed operations are not errors.
++                        if !r.placeholders.contains(&value) {
++                            let msg = crate::lsp::unresolved_message(&id, false);
++                            let uses = r.uses_of_value(value);
++                            for pos in uses {
++                                r.errors.push(crate::lsp::RecordedError {
++                                    pos,
++                                    message: msg.clone(),
++                                });
++                            }
++                        }
++                        continue;
++                    }
+                     input_err!(loc.clone(), UnresolvedReference(id.clone()))?
+                 }
+             }
+@@ -579,7 +604,20 @@
+ 
+         // Check if there are any unresolved forward label references.
+         for (id, op) in label_scope {
+-            if matches!(op, LabelRef::ForwardRef(_)) {
++            if let LabelRef::ForwardRef(fref) = op {
++                if let Some(r) = self.recorder.as_deref_mut()
++                    && r.recover
++                {
++                    let msg = crate::lsp::unresolved_message(&id, true);
++                    let uses = r.uses_of_block(fref);
++                    for pos in uses {
++                        r.errors.push(crate::lsp::RecordedError {
++                            pos,
++                            message: msg.clone(),
++                        });
++                    }
++                    continue;
++                }
+                 input_err!(loc.clone(), UnresolvedReference(id.clone()))?
+             }
+         }
+diff -ruN a/src/region.rs b/src/region.rs
+--- a/src/region.rs	2026-10-07 20:37:03
++++ b/src/region.rs	2026-10-07 20:37:03
+@@ -217,6 +217,10 @@
+             .name_tracker
+             .enter_region(state_stream.state.ctx, parent_op)?;
+ 
++        if crate::lsp::recovering(&state_stream.state) {
++            return parse_region_recovering(state_stream, parent_op, loc);
++        }
++
+         let block_list_parser = spaces().with(combine::many::<Vec<_>, _, _>(
+             BasicBlock::parser(()).skip(spaces()),
+         ));
+@@ -254,4 +258,71 @@
+ 
+         result.into()
+     }
++}
++
++/// pliron-lsp: parse the blocks of a region (after `enter_region`),
++/// recovering from errors. Records a [crate::lsp::Event::Region].
++fn parse_region_recovering<'a>(
++    state_stream: &mut parsable::StateStream<'a>,
++    parent_op: Ptr<Operation>,
++    loc: crate::location::Location,
++) -> ParseResult<'a, Ptr<Region>> {
++    use crate::combine::{Positioned, StreamOnce};
++    use crate::lsp::{Sync, peek_char, record_error, recover_from, skip_spaces, skip_to_sync};
++
++    let open = state_stream.position();
++    if let Err(e) = token('{').parse_stream(state_stream).into_result() {
++        let _ = state_stream
++            .state
++            .name_tracker
++            .exit_region(state_stream.state.ctx, parent_op, loc);
++        return Err(e).into();
++    }
++    let mut blocks: Vec<Ptr<BasicBlock>> = Vec::new();
++    let mut close = None;
++    loop {
++        skip_spaces(state_stream);
++        let pos = state_stream.position();
++        match peek_char(state_stream) {
++            None => {
++                record_error(state_stream, pos, "unclosed region: expected `}`".into());
++                break;
++            }
++            Some('}') => {
++                let _ = state_stream.uncons();
++                close = Some(pos);
++                break;
++            }
++            Some('^') => {
++                let res = BasicBlock::parser(()).parse_stream(state_stream).into_result();
++                if let Ok(block) = recover_from(state_stream, res, false) {
++                    blocks.push(block);
++                }
++            }
++            Some(_) => {
++                record_error(
++                    state_stream,
++                    pos,
++                    "expected a block header (`^label(...):`) or `}`".into(),
++                );
++                if skip_to_sync(state_stream, false, false) == Sync::Eof {
++                    continue;
++                }
++            }
++        }
++    }
++    let region = Operation::add_region(parent_op, state_stream.state.ctx);
++    for block in blocks.iter() {
++        block.insert_at_back(region, state_stream.state.ctx);
++    }
++    crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::Region {
++        region: Some(region),
++        open,
++        close,
++    });
++    state_stream
++        .state
++        .name_tracker
++        .exit_region(state_stream.state.ctx, parent_op, loc)?;
++    Ok(region).into_parse_result()
+ }
+diff -ruN a/src/type.rs b/src/type.rs
+--- a/src/type.rs	2026-10-07 20:37:03
++++ b/src/type.rs	2026-10-07 20:37:03
+@@ -40,13 +40,13 @@
+ 
+ use crate::{
+     arg_err_noloc,
+-    combine::{Parser, parser},
++    combine::{Parser, parser, parser::char::spaces},
+     common_traits::Verify,
+     context::{Context, collect_deduped_interface_verifiers},
+     dialect::{Dialect, DialectName},
+     identifier::Identifier,
+     impl_printable_for_display, input_err,
+-    irfmt::parsers::spaced,
++
+     location::Located,
+     parsable::{IntoParseResult, Parsable, ParseResult, StateStream},
+     printable::{self, Printable},
+@@ -387,9 +387,15 @@
+         _arg: Self::Arg,
+     ) -> ParseResult<'a, Self::Parsed> {
+         let loc = state_stream.loc();
+-        let type_id_parser = spaced(TypeId::parser(()));
++        let type_id_parser = spaces()
++            .with((
++                crate::lsp::position(),
++                TypeId::parser(()),
++                crate::lsp::position(),
++            ))
++            .skip(spaces());
+ 
+-        let mut type_parser = type_id_parser.then(move |type_id: TypeId| {
++        let mut type_parser = type_id_parser.then(move |(start, type_id, id_end): (_, TypeId, _)| {
+             // This clone is to satify the borrow checker.
+             let loc = loc.clone();
+             combine::parser(move |parsable_state: &mut StateStream<'a>| {
+@@ -399,10 +405,21 @@
+                     .dialects
+                     .get(&type_id.dialect)
+                     .expect("Dialect name parsed but dialect isn't registered");
+-                let Some(type_parser) = dialect.types.get(&type_id) else {
++                let Some(type_parser) = dialect.types.get(&type_id).copied() else {
+                     input_err!(loc.clone(), "Unregistered type {}", type_id.disp(state.ctx))?
+                 };
+-                type_parser(parsable_state, &())
++                let res = type_parser(parsable_state, &());
++                if let Ok((ty, _)) = &res {
++                    let ty = *ty;
++                    let end = combine::Positioned::position(parsable_state);
++                    crate::lsp::record(&mut parsable_state.state, || crate::lsp::Event::Type {
++                        ty,
++                        start,
++                        id_end,
++                        end,
++                    });
++                }
++                res
+             })
+         });
+ 
+@@ -513,8 +530,14 @@
+         arg: Self::Arg,
+     ) -> ParseResult<'a, Self::Parsed> {
+         let loc = state_stream.loc();
+-        spaced(TypeId::parser(()))
+-            .then(move |type_id| {
++        spaces()
++            .with((
++                crate::lsp::position(),
++                TypeId::parser(()),
++                crate::lsp::position(),
++            ))
++            .skip(spaces())
++            .then(move |(start, type_id, id_end): (_, TypeId, _)| {
+                 let loc = loc.clone();
+                 combine::parser(move |parsable_state: &mut StateStream<'a>| {
+                     if type_id != T::get_type_id_static() {
+@@ -527,7 +550,18 @@
+                             }
+                         )?
+                     }
+-                    T::parser(arg).parse_stream(parsable_state).into()
++                    let res = T::parser(arg).parse_stream(parsable_state).into_result();
++                    if let Ok((ty, _)) = &res {
++                        let ty: TypeHandle = (*ty).into();
++                        let end = combine::Positioned::position(parsable_state);
++                        crate::lsp::record(&mut parsable_state.state, || crate::lsp::Event::Type {
++                            ty,
++                            start,
++                            id_end,
++                            end,
++                        });
++                    }
++                    res
+                 })
+             })
+             .parse_stream(state_stream)

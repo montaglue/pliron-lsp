@@ -17,6 +17,7 @@
 //! them by hand.
 
 mod analyze;
+mod hooks;
 mod probe;
 
 use std::io::{BufRead, Write};
@@ -88,6 +89,20 @@ pub(crate) fn take_panic() -> String {
         .unwrap_or_else(|| "unknown panic".into())
 }
 
+/// The message of a caught panic (with its location when the panic hook
+/// recorded it).
+#[cfg(feature = "hooks")]
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    let recorded = LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take();
+    recorded.unwrap_or_else(|| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".into())
+    })
+}
+
 /// Run `f` on a worker thread with a large stack, catching panics.
 pub(crate) fn guarded<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
@@ -131,6 +146,7 @@ fn engine_info(info: &BundleInfo) -> EngineInfo {
             .collect(),
         registrations,
         context_error,
+        hooks: hooks::names(),
     }
 }
 

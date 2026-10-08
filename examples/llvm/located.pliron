@@ -1,0 +1,15 @@
+builtin.module @m {
+  ^entry():
+  llvm.func @add_one: llvm.func <builtin.integer i64 (builtin.integer i64) variadic = false> [] {
+    ^entry(x: builtin.integer i64):
+    one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64 !1;
+    r = llvm.add x, one <{nsw=false,nuw=false}> : builtin.integer i64 !2;
+    llvm.return r !3
+  } !0
+}
+
+outlined_attributes:
+!0 = @["src/kernel.rs": line: 2, column: 1], []
+!1 = @["src/kernel.rs": line: 3, column: 15], []
+!2 = @["src/kernel.rs": line: 4, column: 5], []
+!3 = @["src/kernel.rs": line: 4, column: 5], []

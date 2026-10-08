@@ -1,6 +1,7 @@
 // Command implementations.
 
 import * as vscode from "vscode";
+import type * as lc from "vscode-languageclient/node";
 
 import type { Ctx } from "./ctx";
 import * as ext from "./lsp_ext";
@@ -55,6 +56,22 @@ export const commands: Record<string, Cmd> = {
   },
 
   "pliron.showLogs": (ctx) => () => ctx.output.show(true),
+
+  // Run by the "N references" code lenses. The server sends LSP JSON;
+  // VS Code's reference peek wants its own types.
+  "pliron.showReferences": (ctx) => async (...args: unknown[]) => {
+    const [uri, position, locations] = args as [string, lc.Position, lc.Location[]];
+    const c = ctx.client?.protocol2CodeConverter;
+    if (!c) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      "editor.action.showReferences",
+      vscode.Uri.parse(uri),
+      c.asPosition(position),
+      locations.map((l) => c.asLocation(l))
+    );
+  },
 
   "pliron.serverVersion": (ctx) => async () => {
     if (!ctx.client) {

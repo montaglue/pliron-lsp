@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/pliron-lsp-protocol",
+    "crates/pliron-lsp-api",
     "crates/pliron-ir-syntax",
     "crates/pliron-lsp-engine",
     "crates/pliron-lsp-engine-ref",
@@ -22,6 +23,7 @@ repository = "https://github.com/montaglue/pliron-lsp"
 pliron-lsp-protocol = { path = "crates/pliron-lsp-protocol" }
 pliron-ir-syntax = { path = "crates/pliron-ir-syntax" }
 pliron-lsp-engine = { path = "crates/pliron-lsp-engine" }
+pliron-lsp-api = { path = "crates/pliron-lsp-api" }
 
 pliron = "0.18"
 pliron-llvm = { version = "0.18", default-features = false }

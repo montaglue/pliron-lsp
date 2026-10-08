@@ -1,0 +1,6 @@
+builtin.module @k {
+  ^entry():
+}
+
+outlined_attributes:
+!0 = @["src/kernel.rs": line: 2, column: 5], []

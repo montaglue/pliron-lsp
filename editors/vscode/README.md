@@ -15,7 +15,10 @@ From then on your dialects' real parsers and verifiers drive everything:
   names, which jump into the dialect's Rust source;
 - references, rename, document highlight, outline, folding;
 - hover with exact types and the Rust docs of ops/types/attributes;
-- type inlay hints and completion.
+- type inlay hints, completion with snippets from each op's format, and
+  signature help;
+- quick fixes ("did you mean `llvm.add`?"), formatting, workspace symbols and
+  call hierarchy for `@functions`.
 
 When you save a dialect `.rs` file, the engine is rebuilt and swapped in
 automatically.

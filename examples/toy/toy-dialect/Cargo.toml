@@ -6,3 +6,5 @@ publish = false
 
 [dependencies]
 pliron = "0.18"
+# Optional: customizes pliron-lsp (hints, hooks); see the end of src/lib.rs.
+pliron-lsp-api = { path = "../../../crates/pliron-lsp-api" }

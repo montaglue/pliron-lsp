@@ -27,11 +27,22 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
+/// The fixture refers to pliron-lsp-api by a relative path; make it
+/// absolute in the copy.
+fn fix_api_path(dir: &Path) {
+    let m = dir.join("toy-dialect/Cargo.toml");
+    let api = Path::new(env!("CARGO_MANIFEST_DIR")).join("../pliron-lsp-api").canonicalize().unwrap();
+    let text = std::fs::read_to_string(&m).unwrap();
+    let text = text.replace("../../../../../pliron-lsp-api", &api.display().to_string());
+    std::fs::write(&m, text).unwrap();
+}
+
 fn fixture() -> (tempfile::TempDir, PathBuf) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/toy");
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("toy");
     copy_dir(&src, &dir);
+    fix_api_path(&dir);
     (tmp, dir)
 }
 
@@ -107,6 +118,18 @@ fn toy_dialect_bundle() {
     assert!(r.spans.iter().any(|s| matches!(&s.kind, SpanKind::Type { text, .. } if text == "toy.num <32>")));
     let line_of = |needle: &str| text.lines().position(|l| l.contains(needle)).unwrap() as u32 + 1;
     assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == line_of("toy.print")));
+
+    // pliron-lsp-api: the hand-written parser of `toy.repeat 3 times` marks
+    // its tokens, and the dialect's hooks run.
+    let repeat = line_of("toy.repeat");
+    assert!(r.spans.iter().any(|s| matches!(&s.kind, SpanKind::Token { token_type } if token_type == "number") && s.start.line == repeat));
+    assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == repeat));
+    let lint: Vec<_> = r.hook_diags.iter().filter(|d| d.message == "adds a value to itself").collect();
+    assert_eq!(lint.len(), 1, "{:#?}", r.hook_diags);
+    assert_eq!(lint[0].target, pliron_lsp_protocol::HookTarget::Operand { index: 1 });
+    assert!(m.ops.iter().any(|o| o.notes.iter().any(|n| n == "Result used 3 time(s).")), "{:#?}", m.ops);
+    // `d` and `e` are unused.
+    assert_eq!(r.hook_hints.iter().filter(|h| h.label == "(unused)").count(), 2, "{:#?}", r.hook_hints);
 
     // Edit the dialect: rename the keyword and rebuild. The new syntax is
     // picked up (and the old one rejected) without touching any user code.

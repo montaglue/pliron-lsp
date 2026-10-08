@@ -122,6 +122,13 @@ pub enum Event {
         start: SourcePosition,
         end: SourcePosition,
     },
+    /// A token marked by a hand-written parser with [`token`]; `kind` is a
+    /// semantic token type name (`"keyword"`, `"number"`, ...).
+    Token {
+        kind: &'static str,
+        start: SourcePosition,
+        end: SourcePosition,
+    },
     /// A region (`{ ... }`).
     Region {
         region: Option<Ptr<Region>>,
@@ -310,6 +317,27 @@ pub fn keyword<'a>(
         if res.is_ok() {
             let end = state_stream.position();
             record(&mut state_stream.state, || Event::Keyword { start, end });
+        }
+        res
+    })
+}
+
+/// Run `parser` and record what it consumed as an [`Event::Token`] of the
+/// given semantic kind. For hand-written parsers that want their syntax
+/// highlighted; behaves exactly like `parser` otherwise.
+pub fn token<'a, P>(
+    kind: &'static str,
+    mut parser: P,
+) -> impl Parser<StateStream<'a>, Output = P::Output, PartialState = ()> + 'a
+where
+    P: Parser<StateStream<'a>> + 'a,
+{
+    crate::combine::parser(move |state_stream: &mut StateStream<'a>| {
+        let start = state_stream.position();
+        let res = parser.parse_stream(state_stream).into_result();
+        if res.is_ok() {
+            let end = state_stream.position();
+            record(&mut state_stream.state, || Event::Token { kind, start, end });
         }
         res
     })

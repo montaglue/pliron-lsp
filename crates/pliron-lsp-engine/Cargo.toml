@@ -7,12 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 
 # NOTE: this crate's sources are embedded into generated dialect bundles,
-# so it must only depend on pliron, pliron-lsp-protocol and serde_json.
+# so it must only depend on pliron, pliron-lsp-protocol, serde_json and
+# (with `hooks`) pliron-lsp-api; the bundle generator writes its manifest.
 # It requires pliron-lsp's instrumented pliron (`pliron::lsp`).
 [dependencies]
 pliron.workspace = true
 pliron-lsp-protocol.workspace = true
 serde_json.workspace = true
+pliron-lsp-api = { workspace = true, optional = true, features = ["engine"] }
+
+[features]
+# Run the hooks dialects register with pliron-lsp-api.
+hooks = ["dep:pliron-lsp-api"]
 
 [dev-dependencies]
 pliron-llvm.workspace = true

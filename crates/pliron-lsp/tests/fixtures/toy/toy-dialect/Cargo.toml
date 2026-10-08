@@ -6,3 +6,6 @@ publish = false
 
 [dependencies]
 pliron = "0.18"
+# Optional: customizes pliron-lsp (hints, hooks). The tests rewrite this
+# path when they copy the fixture.
+pliron-lsp-api = { path = "../../../../../pliron-lsp-api" }

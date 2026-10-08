@@ -7,6 +7,8 @@ builtin.module @toy {
     c = toy.add a, b : builtin.integer si64;
     d = toy.const <builtin.integer <1: si64>> : toy.num <32>;
     toy.print value = c;
+    e = toy.add c, c : builtin.integer si64;
+    toy.repeat 3 times;
     toy.return
   }
 }

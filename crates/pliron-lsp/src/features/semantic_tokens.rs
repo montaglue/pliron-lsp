@@ -146,6 +146,11 @@ fn exact_tokens(doc: &Document) -> Option<Vec<Tok>> {
                 SpanKind::BlockLabel { .. } => (8, DECL),
                 SpanKind::SuccessorUse { .. } => (8, 0),
                 SpanKind::AttrKey => (4, 0),
+                // Marked by a hand-written parser (pliron_lsp_api::token!).
+                SpanKind::Token { token_type } => match TYPES.iter().position(|t| t == token_type) {
+                    Some(ty) => (ty as u32, 0),
+                    None => continue,
+                },
                 SpanKind::Keyword => {
                     // Punctuation literals are not interesting as keywords.
                     if text[s as usize..(*end).min(e) as usize]

@@ -7,13 +7,17 @@
 //! the current text is available.
 
 pub mod bundle;
+pub mod cli;
 pub mod document;
 pub mod engine;
 pub mod exact;
 pub mod features;
+pub mod format;
 pub mod index;
+pub mod patcher;
 pub mod projects;
 pub mod server;
+pub mod workspace;
 
 /// Run the server on stdin/stdout.
 pub fn run_stdio() -> anyhow::Result<()> {

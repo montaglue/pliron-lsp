@@ -186,3 +186,166 @@ fn engine_exact_features() {
     assert!(msgs.iter().any(|m| m.contains("Unregistered Op llvm.ad")), "{msgs:#?}");
     assert!(msgs.iter().any(|m| m.contains("q")), "{msgs:#?}");
 }
+
+#[test]
+fn editor_features() {
+    let engine = reference_engine();
+    let mut c = Client::start(json!({ "enginePath": engine }));
+    c.open_uri(URI, DEMO);
+    c.wait_diagnostics(|_| true);
+
+    // Signature help inside `llvm.icmp z <SLT> |x`, from llvm.icmp's format
+    // (the reference index loads in the background).
+    let off = DEMO.find("<SLT> x").unwrap() + "<SLT> ".len();
+    let line = DEMO[..off].matches('\n').count();
+    let col = off - DEMO[..off].rfind('\n').unwrap() - 1;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let sig = loop {
+        let sig = c.request(
+            "textDocument/signatureHelp",
+            json!({ "textDocument": { "uri": URI }, "position": { "line": line, "character": col } }),
+        );
+        if !sig.is_null() {
+            break sig;
+        }
+        assert!(std::time::Instant::now() < deadline, "no signature help");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let label = sig["signatures"][0]["label"].as_str().unwrap();
+    assert!(label.starts_with("llvm.icmp ") && label.contains("<predicate>"), "{label}");
+    assert_eq!(sig["activeParameter"], 2, "{sig}");
+
+    // Completion offers ops with a snippet of their syntax.
+    let items = c.request("textDocument/completion", at("    llvm.return r", 0));
+    let icmp = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["label"] == "llvm.icmp")
+        .expect("llvm.icmp completion");
+    let snippet = icmp["textEdit"]["newText"].as_str().unwrap();
+    assert!(snippet.starts_with("llvm.icmp ${1:"), "{snippet}");
+    assert!(snippet.contains("<${2:predicate}>"), "{snippet}");
+    assert_eq!(icmp["insertTextFormat"], 2);
+
+    // Workspace symbols and call hierarchy.
+    let syms = c.request("workspace/symbol", json!({ "query": "cal" }));
+    assert!(syms.as_array().unwrap().iter().any(|s| s["name"] == "@callee"), "{syms}");
+    let items = c.request("textDocument/prepareCallHierarchy", at("@callee:", 0));
+    let item = items[0].clone();
+    assert_eq!(item["name"], "@callee");
+    let incoming = c.request("callHierarchy/incomingCalls", json!({ "item": item }));
+    assert_eq!(incoming[0]["from"]["name"], "@f", "{incoming}");
+    let f_item = c.request("textDocument/prepareCallHierarchy", at("@f:", 0))[0].clone();
+    let outgoing = c.request("callHierarchy/outgoingCalls", json!({ "item": f_item }));
+    assert_eq!(outgoing[0]["to"]["name"], "@callee", "{outgoing}");
+
+    // Formatting re-indents a messy document.
+    let messy = DEMO.replace("    z = llvm.add", "z = llvm.add").replace("  llvm.func @f", "llvm.func @f");
+    let uri2 = "file:///tmp/messy.pliron";
+    c.open_uri(uri2, &messy);
+    let edits = c.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": uri2 }, "options": { "tabSize": 2, "insertSpaces": true } }),
+    );
+    assert_eq!(edits.as_array().unwrap().len(), 2, "{edits}");
+
+    // Quick fix for an unknown op name.
+    c.change_uri(URI, 2, &DEMO.replace("z = llvm.add", "z = llvm.ad"));
+    let diags = c.wait_diagnostics(|d| !d.is_empty());
+    let d = diags
+        .iter()
+        .find(|d| d["message"].as_str().unwrap().contains("Unregistered Op llvm.ad"))
+        .unwrap()
+        .clone();
+    // The diagnostic points at the misspelled name itself.
+    assert_eq!(d["range"]["start"], pos("llvm.add x2", 0, 0));
+    let actions = c.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": URI }, "range": d["range"], "context": { "diagnostics": [d] } }),
+    );
+    let titles: Vec<&str> = actions.as_array().unwrap().iter().map(|a| a["title"].as_str().unwrap()).collect();
+    assert_eq!(titles.first(), Some(&"Change to `llvm.add`"), "{titles:?}");
+}
+
+/// `@symbols` across files (references, rename, reference counts), local
+/// renames with scope checks, and source locations as links.
+#[test]
+fn workspace_rename_lenses_and_links() {
+    let engine = reference_engine();
+    let mut c = Client::start(json!({ "enginePath": engine }));
+    const B_URI: &str = "file:///tmp/user.pliron";
+    let b = "builtin.module @user_mod {\n  ^entry():\n  llvm.func @user: llvm.func <builtin.integer i64 (builtin.integer i64) variadic = false> [] {\n    ^entry(a: builtin.integer i64):\n    r = llvm.call @callee (a) : llvm.func <builtin.integer i64 (builtin.integer i64) variadic = false>;\n    llvm.return r\n  }\n}\n";
+    c.open_uri(URI, DEMO);
+    c.open_uri(B_URI, b);
+    c.wait_diagnostics(|_| true);
+
+    // References to @callee: its definition and the calls in both files.
+    let refs = c.request(
+        "textDocument/references",
+        json!({ "textDocument": { "uri": URI }, "position": pos("@callee:", 0, 1), "context": { "includeDeclaration": true } }),
+    );
+    let uris: Vec<&str> = refs.as_array().unwrap().iter().map(|l| l["uri"].as_str().unwrap()).collect();
+    assert_eq!(uris.iter().filter(|u| **u == URI).count(), 2, "{refs:#}");
+    assert_eq!(uris.iter().filter(|u| **u == B_URI).count(), 1, "{refs:#}");
+
+    // Rename it from the file that only calls it: both files change.
+    let b_call = b.find("@callee").unwrap();
+    let b_pos = json!({ "line": b[..b_call].matches('\n').count(), "character": b_call - b[..b_call].rfind('\n').unwrap() - 1 + 1 });
+    let edit = c.request(
+        "textDocument/rename",
+        json!({ "textDocument": { "uri": B_URI }, "position": b_pos, "newName": "target" }),
+    );
+    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 2, "{edit:#}");
+    assert_eq!(edit["changes"][B_URI].as_array().unwrap().len(), 1, "{edit:#}");
+    assert!(edit["changes"][URI].as_array().unwrap().iter().all(|e| e["newText"] == "target"));
+    // `@f` already exists next to it.
+    let err = c
+        .try_request(
+            "textDocument/rename",
+            json!({ "textDocument": { "uri": B_URI }, "position": b_pos, "newName": "f" }),
+        )
+        .unwrap_err();
+    assert!(err.contains("already defined in demo.pliron"), "{err}");
+
+    // "N references" above functions (not above the module).
+    let lenses = c.request("textDocument/codeLens", json!({ "textDocument": { "uri": URI } }));
+    let titles: Vec<&str> = lenses.as_array().unwrap().iter().map(|l| l["command"]["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["2 references", "0 references"], "{lenses:#}");
+    assert_eq!(lenses[0]["command"]["command"], "pliron.showReferences");
+    assert_eq!(lenses[0]["command"]["arguments"][2].as_array().unwrap().len(), 2);
+
+    // Local names: `z` (3 occurrences); `y2` is taken in the same function,
+    // `a` is not (it lives in @callee, another isolated scope).
+    let edit = c.request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("z = llvm", 0, 0), "newName": "sum" }));
+    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 3, "{edit:#}");
+    let err = c
+        .try_request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("z = llvm", 0, 0), "newName": "y2" }))
+        .unwrap_err();
+    assert!(err.contains("already names another value in this scope (line 19)"), "{err}");
+    let edit = c.request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("x: builtin", 0, 0), "newName": "a" }));
+    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 4, "{edit:#}");
+    // Block labels clash within their region.
+    let err = c
+        .try_request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("^bb0(x0", 0, 1), "newName": "bb1" }))
+        .unwrap_err();
+    assert!(err.contains("another block"), "{err}");
+
+    // Source locations are links (and go-to-definition targets).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::create_dir_all(dir.path().join("out")).unwrap();
+    std::fs::write(dir.path().join("src/kernel.rs"), "fn main() {\n    let x = 1;\n}\n").unwrap();
+    let ir_uri = lsp_types::Url::from_file_path(dir.path().join("out/k.pliron")).unwrap().to_string();
+    let ir = "builtin.module @k {\n  ^entry():\n}\n\noutlined_attributes:\n!0 = @[\"src/kernel.rs\": line: 2, column: 5], []\n";
+    c.open_uri(&ir_uri, ir);
+    let links = c.request("textDocument/documentLink", json!({ "textDocument": { "uri": ir_uri } }));
+    let target = links[0]["target"].as_str().unwrap();
+    assert!(target.ends_with("src/kernel.rs#L2,5"), "{links:#}");
+    let def = c.request(
+        "textDocument/definition",
+        json!({ "textDocument": { "uri": ir_uri }, "position": { "line": 5, "character": 12 } }),
+    );
+    assert!(def["uri"].as_str().unwrap().ends_with("src/kernel.rs"), "{def:#}");
+    assert_eq!(def["range"]["start"], json!({ "line": 1, "character": 4 }));
+}

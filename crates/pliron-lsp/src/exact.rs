@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 use pliron_ir_syntax::lexer::{Offset, TokenKind, lex};
 use pliron_ir_syntax::LineIndex;
-use pliron_lsp_protocol::{AnalyzeResult, DiagPhase, Model, Pos, SpanKind, ValueDef};
+use pliron_lsp_protocol::{
+    AnalyzeResult, DiagPhase, HookSeverity, HookTarget, Model, Pos, SpanKind, ValueDef,
+};
 
 pub type Range = (Offset, Offset);
 
@@ -22,6 +24,18 @@ pub struct XDiag {
     pub range: Range,
     pub message: String,
     pub phase: DiagPhase,
+    pub severity: HookSeverity,
+    /// The lint hook that reported it (for [`DiagPhase::Lint`]).
+    pub source: Option<String>,
+}
+
+/// An inlay hint from a dialect hook.
+#[derive(Clone, Debug)]
+pub struct XHint {
+    pub offset: Offset,
+    pub label: String,
+    /// Shown before the entity (operands) rather than after it.
+    pub before: bool,
 }
 
 /// A symbol defined by an op (`@name`).
@@ -49,6 +63,7 @@ pub struct Exact {
     /// `@name` uses: (range, name).
     pub symbol_uses: Vec<(Range, String)>,
     pub diagnostics: Vec<XDiag>,
+    pub hints: Vec<XHint>,
     pub elapsed_us: u64,
 }
 
@@ -167,17 +182,84 @@ impl Exact {
             }
         };
         for d in res.parse_errors.into_iter().chain(res.verify_errors) {
-            let range = match d.pos {
+            let mut range = match d.pos {
                 Some(p) => token_range(to_offset(li, text, p)),
                 None => (0, 0),
             };
+            // pliron reports unknown names at the start of the op / type;
+            // point at the name itself.
+            if let Some((kind, name)) = crate::features::actions::unregistered(&d.message) {
+                let from = range.0;
+                let found = tokens.iter().find(|t| {
+                    t.start >= from
+                        && t.start <= from + 4096
+                        && match kind {
+                            "dialect" => t.text(text) == name || t.text(text).split('.').next() == Some(name),
+                            _ => t.text(text) == name,
+                        }
+                });
+                if let Some(t) = found {
+                    range = (t.start, t.end);
+                }
+            }
             x.diagnostics.push(XDiag {
                 range,
                 message: d.message,
                 phase: d.phase,
+                severity: HookSeverity::Error,
+                source: None,
+            });
+        }
+        for d in res.hook_diags {
+            let Some(range) = x.target_range(d.op, d.target).or_else(|| x.target_range(d.op, HookTarget::OpName)) else {
+                continue;
+            };
+            x.diagnostics.push(XDiag {
+                range,
+                message: d.message,
+                phase: DiagPhase::Lint,
+                severity: d.severity,
+                source: Some(d.source),
+            });
+        }
+        for h in res.hook_hints {
+            let Some((s, e)) = x.target_range(h.op, h.target) else { continue };
+            let before = matches!(h.target, HookTarget::Operand { .. });
+            x.hints.push(XHint {
+                offset: if before { s } else { e },
+                label: h.label,
+                before,
             });
         }
         x
+    }
+
+    /// The range of what a hook targeted, relative to op `op`.
+    pub fn target_range(&self, op: u32, target: HookTarget) -> Option<Range> {
+        let (whole, name) = *self.op_span.get(&op)?;
+        let info = self.model.ops.get(op as usize)?;
+        match target {
+            HookTarget::OpName => Some(name),
+            HookTarget::Op => Some(whole),
+            HookTarget::Result { index } => {
+                self.value_def.get(info.results.get(index as usize)?).copied()
+            }
+            HookTarget::Operand { index } => {
+                let v = info.operands.get(index as usize)?;
+                // The same value may be used several times (`add c, c`):
+                // take its n-th use in this op (not in an op nested in it).
+                let nth = info.operands[..index as usize].iter().filter(|o| *o == v).count();
+                let mut uses: Vec<Range> = self
+                    .value_uses
+                    .get(v)?
+                    .iter()
+                    .filter(|r| whole.0 <= r.0 && r.1 <= whole.1 && self.op_at(r.0) == Some(op))
+                    .copied()
+                    .collect();
+                uses.sort();
+                uses.get(nth).copied()
+            }
+        }
     }
 
     /// The innermost span (of any kind) containing `off`, preferring the
@@ -246,6 +328,59 @@ impl Exact {
             SpanKind::BlockLabel { block } | SpanKind::SuccessorUse { block } => Some(block),
             _ => None,
         })
+    }
+
+    /// The op whose isolation scope holds names defined in the regions of
+    /// `op` (pliron's SSA name scopes are per `IsolatedFromAbove` op).
+    fn isolation_root(&self, mut op: u32) -> u32 {
+        let m = &self.model;
+        loop {
+            let o = &m.ops[op as usize];
+            if o.traits & pliron_lsp_protocol::op_traits::ISOLATED_FROM_ABOVE != 0 {
+                return op;
+            }
+            match o.parent_block {
+                Some(b) => op = m.regions[m.blocks[b as usize].region as usize].parent_op,
+                None => return op,
+            }
+        }
+    }
+
+    /// The name scope of a value (`None` for top-level results).
+    fn value_scope(&self, v: u32) -> Option<u32> {
+        let m = &self.model;
+        match m.values.get(v as usize)?.def {
+            ValueDef::Result { op, .. } => {
+                let b = m.ops[op as usize].parent_block?;
+                Some(self.isolation_root(m.regions[m.blocks[b as usize].region as usize].parent_op))
+            }
+            ValueDef::Arg { block, .. } => {
+                Some(self.isolation_root(m.regions[m.blocks[block as usize].region as usize].parent_op))
+            }
+            ValueDef::Detached { .. } => None,
+        }
+    }
+
+    /// Would renaming value `v` to `name` clash with another value of its
+    /// scope? Returns the clashing value's definition.
+    pub fn value_conflict(&self, v: u32, name: &str) -> Option<Range> {
+        let scope = self.value_scope(v)?;
+        (0..self.model.values.len() as u32)
+            .filter(|w| *w != v)
+            .filter(|w| self.model.values[*w as usize].given_name.as_deref() == Some(name))
+            .find(|w| self.value_scope(*w) == Some(scope))
+            .and_then(|w| self.value_def.get(&w).copied())
+    }
+
+    /// Would renaming block `b` to `name` clash with a block of its region?
+    pub fn block_conflict(&self, b: u32, name: &str) -> Option<Range> {
+        let m = &self.model;
+        let region = m.blocks.get(b as usize)?.region;
+        m.regions[region as usize]
+            .blocks
+            .iter()
+            .find(|o| **o != b && m.blocks[**o as usize].label.as_deref() == Some(name))
+            .and_then(|o| self.block_def.get(o).copied())
     }
 
     pub fn is_unresolved(&self, value: u32) -> bool {

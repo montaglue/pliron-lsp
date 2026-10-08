@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Prefix of every protocol line written by an engine.
 pub const LINE_MARKER: &str = "\u{1}PLSP\u{1}";
@@ -58,6 +58,8 @@ pub enum VerifyMode {
     Off,
     /// `verify_operation` on the top-level op (stops at the first error).
     First,
+    /// Verify every operation and block separately and report all errors.
+    All,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -99,6 +101,10 @@ pub struct EngineInfo {
     pub registrations: u32,
     /// Panic message if `Context::new()` failed in this engine.
     pub context_error: Option<String>,
+    /// Hooks registered by dialects with `pliron-lsp-api` (e.g.
+    /// `"lint my_dialect::check_widths"`).
+    #[serde(default)]
+    pub hooks: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +126,53 @@ pub struct AnalyzeResult {
     pub model: Option<Model>,
     /// Source spans of everything the (dialect) parsers parsed.
     pub spans: Vec<Span>,
+    /// Diagnostics reported by dialect lint hooks.
+    #[serde(default)]
+    pub hook_diags: Vec<HookDiag>,
+    /// Inlay hints from dialect hooks.
+    #[serde(default)]
+    pub hook_hints: Vec<HookHint>,
     pub elapsed_us: u64,
+}
+
+/// What a hook diagnostic or inlay hint is attached to, relative to an op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "at", rename_all = "snake_case")]
+pub enum HookTarget {
+    OpName,
+    Op,
+    Result { index: u32 },
+    Operand { index: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+/// A diagnostic reported by a dialect lint hook.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookDiag {
+    /// Index into [`Model::ops`].
+    pub op: u32,
+    pub target: HookTarget,
+    pub severity: HookSeverity,
+    pub message: String,
+    /// The hook that reported it.
+    pub source: String,
+}
+
+/// An inlay hint from a dialect hook.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookHint {
+    /// Index into [`Model::ops`].
+    pub op: u32,
+    pub target: HookTarget,
+    pub label: String,
 }
 
 /// A source span recorded by the instrumented pliron parser. `end` is
@@ -158,6 +210,9 @@ pub enum SpanKind {
     AttrKey,
     /// A literal keyword of a declarative op/type/attribute format.
     Keyword,
+    /// A token marked by a hand-written parser (`pliron_lsp_api::token!`);
+    /// `token_type` is a semantic token type name.
+    Token { token_type: String },
     /// A region; `start` is its `{`, `end` its `}` (or `start` if unclosed).
     Region { closed: bool },
 }
@@ -169,6 +224,9 @@ pub enum DiagPhase {
     Verify,
     /// The engine panicked while parsing or verifying.
     Panic,
+    /// Reported by a dialect lint hook (frontend only; engines send
+    /// [`HookDiag`]s).
+    Lint,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,6 +269,9 @@ pub struct OpInfo {
     pub symbol: Option<String>,
     /// Bit set of [`op_traits`].
     pub traits: u32,
+    /// Extra hover text from dialect hooks (markdown).
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Bits of [`OpInfo::traits`].

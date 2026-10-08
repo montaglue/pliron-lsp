@@ -133,6 +133,9 @@ pub struct Server {
     due: HashMap<Url, Instant>,
     semantic_refresh: bool,
     inlay_refresh: bool,
+    code_lens_refresh: bool,
+    /// Workspace folders (for resolving relative source locations).
+    workspace_roots: Vec<PathBuf>,
     watch_registration: bool,
     known_ops: BTreeSet<String>,
     next_id: i32,
@@ -144,6 +147,12 @@ pub struct Server {
     reference_index_requested: bool,
     /// Does the client support `window/workDoneProgress`?
     work_done_progress: bool,
+    /// Does the client support snippets in completions?
+    snippet_support: bool,
+    /// IR files of the workspace that are not open (for symbols across
+    /// files), and the channel the initial scan reports on.
+    ws_files: HashMap<Url, Document>,
+    ws_rx: Receiver<Vec<(Url, Document)>>,
 }
 
 /// Parameters of the `pliron/*` document requests.
@@ -182,6 +191,26 @@ pub fn capabilities(enc: Encoding) -> ServerCapabilities {
             },
         )),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec![" ".into(), ",".into(), "(".into(), "<".into(), ":".into()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        code_lens_provider: Some(lsp_types::CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
+        document_link_provider: Some(lsp_types::DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
+        call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            ..CodeActionOptions::default()
+        })),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec!["^".into(), "@".into(), ".".into()]),
             ..CompletionOptions::default()
@@ -234,6 +263,10 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
         .and_then(|w| w.inlay_hint.as_ref())
         .and_then(|s| s.refresh_support)
         .unwrap_or(false);
+    let code_lens_refresh = ws
+        .and_then(|w| w.code_lens.as_ref())
+        .and_then(|s| s.refresh_support)
+        .unwrap_or(false);
     let watch_registration = ws
         .and_then(|w| w.did_change_watched_files.as_ref())
         .and_then(|d| d.dynamic_registration)
@@ -241,6 +274,33 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
 
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded();
     let (job_tx, job_rx) = crossbeam_channel::unbounded();
+    let (ws_tx, ws_rx) = crossbeam_channel::unbounded();
+    // Scan the workspace for IR files in the background.
+    let mut roots: Vec<PathBuf> = init
+        .workspace_folders
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|f| f.uri.to_file_path().ok())
+        .collect();
+    #[allow(deprecated)]
+    if roots.is_empty()
+        && let Some(root) = init.root_uri.as_ref().and_then(|u| u.to_file_path().ok())
+    {
+        roots.push(root);
+    }
+    let workspace_roots = roots.clone();
+    std::thread::spawn(move || {
+        let files = crate::workspace::find_ir_files(&roots)
+            .into_iter()
+            .filter_map(|p| {
+                let text = std::fs::read_to_string(&p).ok()?;
+                let uri = Url::from_file_path(&p).ok()?;
+                Some((uri, Document::new(text, 0, &Knowledge::default())))
+            })
+            .collect();
+        let _ = ws_tx.send(files);
+    });
     let reference_exe = if opts.disable_engine {
         None
     } else {
@@ -262,6 +322,8 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
         due: HashMap::new(),
         semantic_refresh,
         inlay_refresh,
+        code_lens_refresh,
+        workspace_roots,
         watch_registration,
         known_ops: BTreeSet::new(),
         next_id: 0,
@@ -274,6 +336,16 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
             .window
             .as_ref()
             .and_then(|w| w.work_done_progress)
+            .unwrap_or(false),
+        ws_files: HashMap::new(),
+        ws_rx,
+        snippet_support: init
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|t| t.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .and_then(|i| i.snippet_support)
             .unwrap_or(false),
     };
     if server.reference_exe.is_none() && !server.opts.disable_engine {
@@ -322,6 +394,14 @@ impl Server {
                 recv(self.job_rx) -> ev => {
                     if let Ok(ev) = ev {
                         self.on_job_event(ev);
+                    }
+                }
+                recv(self.ws_rx) -> files => {
+                    if let Ok(files) = files {
+                        for (uri, doc) in files {
+                            self.ws_files.insert(uri, doc);
+                        }
+                        self.refresh_code_lenses();
                     }
                 }
                 default(timeout) => {}
@@ -545,6 +625,44 @@ impl Server {
 
     // ----- diagnostics & scheduling --------------------------------------
 
+    /// Give the syntax layer what the dialect indexes know about ops
+    /// (interfaces, keywords, `hints!`); it matters until an engine has
+    /// analyzed a document.
+    fn refresh_knowledge(&mut self) {
+        let mut k = Knowledge::default();
+        for (index, _) in self.indexes.values() {
+            for (name, facts) in index.knowledge().ops {
+                k.ops.entry(name).or_insert(facts);
+            }
+        }
+        if k == self.knowledge {
+            return;
+        }
+        self.knowledge = k;
+        for doc in self.docs.values_mut().chain(self.ws_files.values_mut()) {
+            doc.reanalyze(&self.knowledge);
+        }
+        // Re-publish through the normal path (which waits for a pending
+        // engine analysis instead of flashing syntax-only results).
+        let uris: Vec<Url> = self.docs.keys().cloned().collect();
+        for uri in uris {
+            if self.docs[&uri].fresh_exact().is_none() {
+                self.schedule(uri, Duration::ZERO);
+            }
+        }
+        if self.semantic_refresh {
+            self.client_request::<SemanticTokensRefresh>(());
+        }
+    }
+
+    /// Reference counts depend on other files: ask the client to re-request
+    /// code lenses.
+    fn refresh_code_lenses(&mut self) {
+        if self.code_lens_refresh {
+            self.client_request::<lsp_types::request::CodeLensRefresh>(());
+        }
+    }
+
     fn publish(&self, uri: &Url, engine_expected: bool) {
         let Some(doc) = self.docs.get(uri) else {
             return;
@@ -667,6 +785,7 @@ impl Server {
                 if self.inlay_refresh {
                     self.client_request::<InlayHintRefreshRequest>(());
                 }
+                self.refresh_code_lenses();
             }
             Finished::Probe(_) => {}
             Finished::Failed { uri, message } => {
@@ -698,6 +817,7 @@ impl Server {
                     .map(|d| d.canonicalize().unwrap_or(d))
                     .collect();
                 self.indexes.insert(root, (Arc::new(index), dirs));
+                self.refresh_knowledge();
             }
             JobEvent::Done { root, outcome } => {
                 let key = root.display().to_string();
@@ -789,7 +909,7 @@ impl Server {
         if !self.watch_registration {
             return;
         }
-        let watchers = ["**/*.rs", "**/Cargo.toml", "**/Cargo.lock"]
+        let watchers = ["**/*.rs", "**/Cargo.toml", "**/Cargo.lock", "**/*.pliron", "**/*.plir"]
             .into_iter()
             .map(|g| FileSystemWatcher {
                 glob_pattern: GlobPattern::String(g.into()),
@@ -825,6 +945,7 @@ impl Server {
                     Arc::make_mut(index).refresh_file(path);
                 }
             }
+            self.refresh_knowledge();
         }
         for p in self.projects.values_mut() {
             if p.watched.iter().any(|w| path.starts_with(w)) {
@@ -883,6 +1004,20 @@ impl Server {
                 if let Ok(p) = serde_json::from_value::<DidChangeWatchedFilesParams>(n.params) {
                     for change in p.changes {
                         if let Ok(path) = change.uri.to_file_path() {
+                            if path.extension().is_some_and(|x| x == "pliron" || x == "plir") {
+                                match std::fs::read_to_string(&path) {
+                                    Ok(text) if change.typ != FileChangeType::DELETED => {
+                                        self.ws_files.insert(
+                                            change.uri.clone(),
+                                            Document::new(text, 0, &self.knowledge),
+                                        );
+                                    }
+                                    _ => {
+                                        self.ws_files.remove(&change.uri);
+                                    }
+                                }
+                                self.refresh_code_lenses();
+                            }
                             self.on_file_changed(&path);
                         }
                     }
@@ -946,6 +1081,20 @@ impl Server {
                 let index = self.index_for(&tdp.text_document.uri);
                 let doc = self.doc(&tdp.text_document.uri)?;
                 let off = doc.offset(tdp.position, enc);
+                // A source location (`"file.rs": line: 3, column: 5`).
+                if let Some(l) = features::links::location_at(doc, off)
+                    && let Some(target) = self.source_target(&tdp.text_document.uri, &l)
+                {
+                    let p = Position {
+                        line: l.line - 1,
+                        character: l.column - 1,
+                    };
+                    return Ok(serde_json::to_value(GotoDefinitionResponse::Scalar(Location {
+                        uri: target,
+                        range: lsp_types::Range { start: p, end: p },
+                    }))?);
+                }
+                let doc = self.doc(&tdp.text_document.uri)?;
                 let mut loc = features::entity::entity_at(doc, off)
                     .and_then(|e| e.def)
                     .map(|r| {
@@ -954,6 +1103,25 @@ impl Server {
                             range: doc.range(r, enc),
                         })
                     });
+                // A symbol defined in another file of the workspace.
+                if loc.is_none()
+                    && let Some(e) = features::entity::entity_at(doc, off)
+                    && e.kind == EntityKind::Symbol
+                {
+                    let files = self.indexed_files();
+                    let defs: Vec<Location> = crate::workspace::definitions(&files, &e.name, &tdp.text_document.uri)
+                        .into_iter()
+                        .filter(|(f, _)| *f.uri != tdp.text_document.uri)
+                        .map(|(f, d)| Location {
+                            uri: f.uri.clone(),
+                            range: f.doc.range(d.range, enc),
+                        })
+                        .collect();
+                    if !defs.is_empty() {
+                        return Ok(serde_json::to_value(GotoDefinitionResponse::Array(defs))?);
+                    }
+                }
+                let doc = self.doc(&tdp.text_document.uri)?;
                 // Op / type / attribute names jump to their Rust definition.
                 if loc.is_none()
                     && let Some((name, kind, _)) = features::dialect_name_at(doc, off)
@@ -976,6 +1144,24 @@ impl Server {
                 let tdp = p.text_document_position;
                 let doc = self.doc(&tdp.text_document.uri)?;
                 let off = doc.offset(tdp.position, enc);
+                // Symbols: across the workspace.
+                if let Some(e) = features::entity::entity_at(doc, off)
+                    && e.kind == EntityKind::Symbol
+                {
+                    let files = self.indexed_files();
+                    let occurrences = crate::workspace::symbol_occurrences(&files, &e.name, &tdp.text_document.uri)
+                        .map_err(|m| anyhow::anyhow!(m))?;
+                    let locs: Vec<Location> = occurrences
+                        .iter()
+                        .filter(|o| p.context.include_declaration || !o.is_def)
+                        .map(|o| Location {
+                            uri: files[o.file].uri.clone(),
+                            range: files[o.file].doc.range(o.range, enc),
+                        })
+                        .collect();
+                    return Ok(serde_json::to_value(locs)?);
+                }
+                let doc = self.doc(&tdp.text_document.uri)?;
                 let locs: Vec<Location> = features::entity::entity_at(doc, off)
                     .map(|e| {
                         let mut v = e.uses.clone();
@@ -1019,13 +1205,21 @@ impl Server {
                 let p: TextDocumentPositionParams = serde_json::from_value(req.params)?;
                 let doc = self.doc(&p.text_document.uri)?;
                 let off = doc.offset(p.position, enc);
-                let resp = features::entity::entity_at(doc, off).map(|e| {
+                let entity = features::entity::entity_at(doc, off);
+                let resp = entity.as_ref().map(|e| {
                     let at = name_range(doc, e.at);
                     PrepareRenameResponse::RangeWithPlaceholder {
                         range: doc.range(at, enc),
                         placeholder: e.name.clone(),
                     }
                 });
+                if let Some(e) = &entity
+                    && e.kind == EntityKind::Symbol
+                {
+                    let files = self.indexed_files();
+                    crate::workspace::symbol_occurrences(&files, &e.name, &p.text_document.uri)
+                        .map_err(|m| anyhow::anyhow!(m))?;
+                }
                 serde_json::to_value(resp)?
             }
             Rename::METHOD => {
@@ -1043,20 +1237,69 @@ impl Server {
                 if e.kind != EntityKind::Outline && !is_identifier(&new) {
                     anyhow::bail!("`{new}` is not a valid pliron identifier");
                 }
-                let edits: Vec<TextEdit> = e
-                    .occurrences()
-                    .into_iter()
-                    .map(|r| TextEdit {
-                        range: doc.range(name_range(doc, r), enc),
-                        new_text: new.clone(),
-                    })
-                    .collect();
-                let mut changes = HashMap::new();
-                changes.insert(tdp.text_document.uri.clone(), edits);
+                let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+                if e.kind == EntityKind::Symbol {
+                    // Across the workspace's IR files.
+                    let files = self.indexed_files();
+                    let occurrences = crate::workspace::symbol_occurrences(&files, &e.name, &tdp.text_document.uri)
+                        .map_err(|m| anyhow::anyhow!(m))?;
+                    if e.name != new
+                        && let Some(m) = crate::workspace::rename_conflict(&files, &occurrences, &new)
+                    {
+                        anyhow::bail!(m);
+                    }
+                    for o in occurrences {
+                        let f = &files[o.file];
+                        changes.entry(f.uri.clone()).or_default().push(TextEdit {
+                            range: f.doc.range(name_range(f.doc, o.range), enc),
+                            new_text: new.clone(),
+                        });
+                    }
+                } else {
+                    let ranges = match e.kind {
+                        EntityKind::Value | EntityKind::Block => {
+                            features::rename::local_rename(doc, &e, &new, enc).map_err(|m| anyhow::anyhow!(m))?
+                        }
+                        _ => e.occurrences(),
+                    };
+                    let edits = ranges
+                        .into_iter()
+                        .map(|r| TextEdit {
+                            range: doc.range(name_range(doc, r), enc),
+                            new_text: new.clone(),
+                        })
+                        .collect();
+                    changes.insert(tdp.text_document.uri.clone(), edits);
+                }
                 serde_json::to_value(WorkspaceEdit {
                     changes: Some(changes),
                     ..WorkspaceEdit::default()
                 })?
+            }
+            lsp_types::request::CodeLensRequest::METHOD => {
+                let p: lsp_types::CodeLensParams = serde_json::from_value(req.params)?;
+                self.doc(&p.text_document.uri)?;
+                let files = self.indexed_files();
+                serde_json::to_value(crate::workspace::reference_lenses(&files, &p.text_document.uri, enc))?
+            }
+            lsp_types::request::DocumentLinkRequest::METHOD => {
+                let p: lsp_types::DocumentLinkParams = serde_json::from_value(req.params)?;
+                let uri = p.text_document.uri;
+                let doc = self.doc(&uri)?;
+                let links: Vec<lsp_types::DocumentLink> = features::links::source_locations(doc)
+                    .into_iter()
+                    .filter_map(|l| {
+                        let mut target = self.source_target(&uri, &l)?;
+                        target.set_fragment(Some(&format!("L{},{}", l.line, l.column)));
+                        Some(lsp_types::DocumentLink {
+                            range: doc.range(l.range, enc),
+                            target: Some(target),
+                            tooltip: Some(format!("Open {}:{}:{}", l.path, l.line, l.column)),
+                            data: None,
+                        })
+                    })
+                    .collect();
+                serde_json::to_value(links)?
             }
             DocumentSymbolRequest::METHOD => {
                 let p: DocumentSymbolParams = serde_json::from_value(req.params)?;
@@ -1104,7 +1347,100 @@ impl Server {
                     off,
                     &self.known_ops,
                     index.as_deref(),
+                    self.snippet_support,
+                    enc,
                 )))?
+            }
+            lsp_types::request::SignatureHelpRequest::METHOD => {
+                let p: SignatureHelpParams = serde_json::from_value(req.params)?;
+                let tdp = p.text_document_position_params;
+                let index = self.index_for(&tdp.text_document.uri);
+                let doc = self.doc(&tdp.text_document.uri)?;
+                let off = doc.offset(tdp.position, enc);
+                serde_json::to_value(features::signature_help(doc, off, index.as_deref()))?
+            }
+            lsp_types::request::Formatting::METHOD | lsp_types::request::RangeFormatting::METHOD => {
+                let (uri, options, range) = if req.method == lsp_types::request::Formatting::METHOD {
+                    let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
+                    (p.text_document.uri, p.options, None)
+                } else {
+                    let p: DocumentRangeFormattingParams = serde_json::from_value(req.params)?;
+                    (p.text_document.uri, p.options, Some((p.range.start.line, p.range.end.line)))
+                };
+                let doc = self.doc(&uri)?;
+                let unit = if options.insert_spaces {
+                    " ".repeat(options.tab_size.max(1) as usize)
+                } else {
+                    "\t".into()
+                };
+                let edits: Option<Vec<TextEdit>> =
+                    features::formatting::format_edits(doc, &unit, range).map(|edits| {
+                        edits
+                            .into_iter()
+                            .map(|e| TextEdit {
+                                range: doc.range((e.start, e.end), enc),
+                                new_text: e.text,
+                            })
+                            .collect()
+                    });
+                serde_json::to_value(edits)?
+            }
+            lsp_types::request::CodeActionRequest::METHOD => {
+                let p: CodeActionParams = serde_json::from_value(req.params)?;
+                let uri = p.text_document.uri;
+                let index = self.index_for(&uri);
+                let doc = self.doc(&uri)?;
+                serde_json::to_value(features::actions::code_actions(
+                    doc,
+                    &uri,
+                    &p.context.diagnostics,
+                    enc,
+                    index.as_deref(),
+                    &self.known_ops,
+                ))?
+            }
+            lsp_types::request::WorkspaceSymbolRequest::METHOD => {
+                let p: WorkspaceSymbolParams = serde_json::from_value(req.params)?;
+                let files = self.indexed_files();
+                serde_json::to_value(WorkspaceSymbolResponse::Flat(
+                    crate::workspace::workspace_symbols(&files, &p.query, enc),
+                ))?
+            }
+            lsp_types::request::CallHierarchyPrepare::METHOD => {
+                let p: CallHierarchyPrepareParams = serde_json::from_value(req.params)?;
+                let tdp = p.text_document_position_params;
+                let doc = self.doc(&tdp.text_document.uri)?;
+                let off = doc.offset(tdp.position, enc);
+                let name = features::entity::entity_at(doc, off)
+                    .filter(|e| e.kind == EntityKind::Symbol)
+                    .map(|e| e.name);
+                let files = self.indexed_files();
+                let items: Vec<CallHierarchyItem> = name
+                    .map(|n| {
+                        crate::workspace::definitions(&files, &n, &tdp.text_document.uri)
+                            .into_iter()
+                            .take(1)
+                            .map(|(f, d)| crate::workspace::item(f, d, enc))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                serde_json::to_value((!items.is_empty()).then_some(items))?
+            }
+            lsp_types::request::CallHierarchyIncomingCalls::METHOD => {
+                let p: CallHierarchyIncomingCallsParams = serde_json::from_value(req.params)?;
+                let files = self.indexed_files();
+                let name = p.item.name.trim_start_matches('@');
+                serde_json::to_value(crate::workspace::incoming_calls(&files, name, enc))?
+            }
+            lsp_types::request::CallHierarchyOutgoingCalls::METHOD => {
+                let p: CallHierarchyOutgoingCallsParams = serde_json::from_value(req.params)?;
+                let files = self.indexed_files();
+                serde_json::to_value(crate::workspace::outgoing_calls(
+                    &files,
+                    &p.item.uri,
+                    p.item.selection_range.start,
+                    enc,
+                ))?
             }
             "pliron/serverVersion" => Value::String(env!("CARGO_PKG_VERSION").into()),
             "pliron/analyzerStatus" => {
@@ -1150,6 +1486,36 @@ impl Server {
 }
 
 impl Server {
+    /// Open documents plus the workspace's other IR files, with symbols.
+    /// The file a source location in `uri` refers to.
+    fn source_target(&self, uri: &Url, l: &features::links::SourceLoc) -> Option<Url> {
+        let ir = uri.to_file_path().ok();
+        let path = features::links::resolve(&l.path, ir.as_deref(), &self.workspace_roots)?;
+        Url::from_file_path(path).ok()
+    }
+
+    fn indexed_files(&self) -> Vec<crate::workspace::IndexedFile<'_>> {
+        let mut out: Vec<crate::workspace::IndexedFile> = self
+            .docs
+            .iter()
+            .map(|(uri, doc)| crate::workspace::IndexedFile {
+                uri,
+                doc,
+                symbols: crate::workspace::file_symbols(doc),
+            })
+            .collect();
+        for (uri, doc) in &self.ws_files {
+            if !self.docs.contains_key(uri) {
+                out.push(crate::workspace::IndexedFile {
+                    uri,
+                    doc,
+                    symbols: crate::workspace::file_symbols(doc),
+                });
+            }
+        }
+        out
+    }
+
     /// A markdown report of the server's state (like rust-analyzer's
     /// "Status" command).
     fn analyzer_status(&mut self, uri: Option<Url>) -> String {

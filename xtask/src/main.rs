@@ -81,8 +81,11 @@ fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
     for (_, bin) in BINARIES {
         let from = root.join("target/release").join(exe(bin));
         let to = server.join(exe(bin));
-        std::fs::copy(&from, &to)
+        // Copy then rename, so a running server keeps its (old) binary.
+        let tmp = to.with_extension("tmp");
+        std::fs::copy(&from, &tmp)
             .with_context(|| format!("copying {} (build with --release first)", from.display()))?;
+        std::fs::rename(&tmp, &to)?;
         eprintln!("bundled {}", to.display());
     }
 

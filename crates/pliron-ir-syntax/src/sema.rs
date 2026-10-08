@@ -19,12 +19,12 @@ use crate::lexer::{Offset, TokenKind};
 use crate::tree::{BlockId, ErrorKind, RegionId, StmtId, TokIdx, Tree};
 
 /// Dialect knowledge that refines the syntactic analysis.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Knowledge {
     pub ops: HashMap<String, OpFacts>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct OpFacts {
     /// Does the op implement `IsolatedFromAboveInterface`?
     pub isolated: Option<bool>,
@@ -188,6 +188,32 @@ impl Analysis {
                 .map(|b| self.region_scope[self.tree.block(b).region.0 as usize]),
             _ => None,
         }
+    }
+
+    /// Another definition that `def` would clash with if it were renamed to
+    /// `name`: a value of the same isolation scope, or a label of the same
+    /// region (pliron's name scopes).
+    pub fn conflicting_def(&self, def: DefId, name: &str) -> Option<DefId> {
+        let d = self.def(def);
+        let clash = |o: &Def| -> bool {
+            match d.kind {
+                DefKind::Result | DefKind::BlockArg => {
+                    matches!(o.kind, DefKind::Result | DefKind::BlockArg)
+                        && self.value_def_scope(o) == self.value_def_scope(d)
+                }
+                DefKind::Label => {
+                    o.kind == DefKind::Label
+                        && o.block.map(|b| self.tree.block(b).region)
+                            == d.block.map(|b| self.tree.block(b).region)
+                }
+                DefKind::Symbol | DefKind::Outline => o.kind == d.kind,
+            }
+        };
+        self.defs
+            .iter()
+            .enumerate()
+            .find(|(i, o)| *i != def.0 as usize && o.name == name && clash(o))
+            .map(|(i, _)| DefId(i as u32))
     }
 
     /// Labels defined in a region.
@@ -374,7 +400,17 @@ impl<'a> Resolver<'a> {
         match self.facts(sid).and_then(|f| f.symbol) {
             Some(true) => lead,
             Some(false) => None,
-            None => lead.filter(|_| self.a.tree.stmt(sid).results.is_empty()),
+            // Heuristic: a symbol op has no results and either owns a region
+            // (`func @f ... { }`) or declares something after a `:`
+            // (`llvm.func @f: type`, globals). `call @f(...)` does neither.
+            None => lead.filter(|_| {
+                let s = self.a.tree.stmt(sid);
+                s.results.is_empty()
+                    && (!s.regions.is_empty()
+                        || s.body
+                            .get(1)
+                            .is_some_and(|t| self.a.tree.tok(*t).is_punct(':')))
+            }),
         }
     }
 
@@ -797,14 +833,21 @@ impl<'a> Resolver<'a> {
                     || (k % 2 == 1 && kind(k) == TokenKind::Punct(','))
             })
             && simple_end % 2 == 1;
-        if simple {
-            for c in ctx.iter_mut().take(simple_end) {
-                *c = WordCtx::Operand;
-            }
-        }
+        // `op a, b : T` is very likely operands, but custom syntax can use
+        // the same shape for other names (e.g. `cube.buffer_len buffer_0`):
+        // resolve them, but never report them as undefined.
+        let _ = simple;
 
-        // Canonical operand list: `(` right after the op name.
-        if n > 0 && kind(0) == TokenKind::Punct('(') {
+        // pliron's canonical form: `(opds) [succs] [attrs]: <(tys) -> (tys)>`.
+        let canonical = n > 0
+            && kind(0) == TokenKind::Punct('(')
+            && (1..n).any(|k| {
+                s.body_depth[k] == 0
+                    && kind(k) == TokenKind::Punct(':')
+                    && k + 1 < n
+                    && kind(k + 1) == TokenKind::Punct('<')
+            });
+        if canonical {
             let mut k = 1;
             while k < n && !(s.body_depth[k] == 0 && kind(k) == TokenKind::Punct(')')) {
                 if kind(k) == TokenKind::Ident && s.body_depth[k] == 1 {
@@ -928,6 +971,32 @@ mod tests {
     }
 
     #[test]
+    fn rename_conflicts_follow_name_scopes() {
+        let src = "builtin.module @m {\n^e():\n  t.f @a {\n  ^b(x: i):\n    y = t.c;\n    t.r\n  };\n  t.f @b {\n  ^b(z: i):\n    t.r\n  }\n}\n";
+        let mut k = Knowledge::default();
+        k.ops.insert(
+            "t.f".into(),
+            OpFacts {
+                isolated: Some(true),
+                symbol: Some(true),
+                ..OpFacts::default()
+            },
+        );
+        let a = analyze(src, &k);
+        let def = |name: &str| {
+            DefId(a.defs.iter().position(|d| d.name == name && d.kind != DefKind::Symbol).unwrap() as u32)
+        };
+        // `x` and `y` share @a's scope; `z` lives in @b's.
+        assert!(a.conflicting_def(def("x"), "y").is_some());
+        assert!(a.conflicting_def(def("x"), "z").is_none());
+        assert!(a.conflicting_def(def("x"), "w").is_none());
+        // Labels clash within a region only: both functions have `^b`.
+        let labels: Vec<DefId> = a.defs_of_kind(DefKind::Label).filter(|d| a.def(*d).name == "b").collect();
+        assert_eq!(labels.len(), 2);
+        assert!(a.conflicting_def(labels[0], "e").is_none());
+    }
+
+    #[test]
     fn isolated_scopes_separate_names() {
         // `a` is defined in @callee and must not be visible in @f.
         let src = "builtin.module @m {\n^e():\n  t.f @g {\n  ^b(a: i):\n    t.r a\n  };\n  t.f @h {\n  ^b():\n    t.r a\n  }\n}";
@@ -937,8 +1006,8 @@ mod tests {
         // is not an ancestor, so it stays unresolved.
         let second_a = tok_at(&an, src, "a\n  }\n}", 0);
         assert_eq!(an.role(second_a), Role::Word);
-        let d = an.diagnostics.iter().find(|d| d.message.contains("undefined value"));
-        assert!(d.is_some(), "{:#?}", an.diagnostics);
+        // Custom (non-canonical) syntax is never reported as undefined.
+        assert!(an.diagnostics.is_empty(), "{:#?}", an.diagnostics);
     }
 
     #[test]
@@ -976,7 +1045,7 @@ mod tests {
 
     #[test]
     fn undefined_names_diagnosed() {
-        let src = "builtin.module @m {\n^e():\n  x = t.a q, r;\n  t.br ^nowhere(x)\n}";
+        let src = "builtin.module @m {\n^e():\n  x = t.a (q, r) [] []: <(i, i) -> (i)>;\n  t.br ^nowhere(x)\n}";
         let a = analyze(src, &Knowledge::default());
         let msgs: Vec<_> = a.diagnostics.iter().map(|d| d.message.clone()).collect();
         assert!(msgs.iter().any(|m| m.contains("undefined value `q`")), "{msgs:?}");

@@ -30,8 +30,19 @@ pub fn engine_src_hash() -> &'static str {
     embedded::SRC_HASH
 }
 
-/// The pliron version line the instrumented copy supports.
-const SUPPORTED_PLIRON: (u64, u64) = (0, 18);
+/// The instrumentation patch for a pliron version line, if supported.
+fn patch_for(version: &cargo_metadata::semver::Version) -> Option<(&'static str, &'static str)> {
+    let key = format!("{}.{}", version.major, version.minor);
+    embedded::PATCHES
+        .iter()
+        .find(|(v, _)| *v == key)
+        .map(|(v, p)| (*v, *p))
+}
+
+/// The pliron version lines pliron-lsp can instrument.
+pub fn supported_versions() -> Vec<&'static str> {
+    embedded::PATCHES.iter().map(|(v, _)| *v).collect()
+}
 
 /// Strings whose presence marks a crate as defining pliron entities.
 const REGISTRATION_MARKERS: &[&str] = &[
@@ -87,10 +98,34 @@ pub struct DialectCrate {
     pub dir: PathBuf,
 }
 
+/// Where the project's pliron comes from (it is copied and instrumented).
+#[derive(Clone, Debug)]
+pub enum PlironSource {
+    /// crates.io: separate pliron and pliron-derive crate directories.
+    Registry {
+        pliron_dir: PathBuf,
+        derive_dir: PathBuf,
+    },
+    /// A git checkout of the pliron repository.
+    Git {
+        url: String,
+        reference: Option<(String, String)>,
+        rev: String,
+        /// Root of the checkout (the pliron package + its workspace).
+        root: PathBuf,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct Selection {
     pub pliron_version: String,
+    pub pliron: PlironSource,
+    /// The version line of the instrumentation patch.
+    pub patch_version: &'static str,
     pub dialects: Vec<DialectCrate>,
+    /// The project's `pliron-lsp-api`, if a dialect uses it: the engine
+    /// then runs the dialects' hooks.
+    pub api: Option<DepSpec>,
 }
 
 /// Why a project cannot have a dialect engine.
@@ -165,6 +200,30 @@ fn sources_contain(dir: &Path, needles: &[&str], depth: usize) -> bool {
     false
 }
 
+/// Features to enable for a dialect crate in a bundle: the project's
+/// resolved features, except those that only add native bindings the
+/// language server never uses (pliron-llvm's `llvm-sys` needs an LLVM
+/// installation and is not needed to parse or verify LLVM-dialect IR).
+fn dialect_features(name: &str, resolved: &[String]) -> Vec<String> {
+    resolved
+        .iter()
+        .filter(|f| !(name == "pliron-llvm" && (*f == "llvm-sys" || *f == "default")))
+        .cloned()
+        .collect()
+}
+
+/// The same selection with all dialect features and hooks off (fallback
+/// when a build with the project's features fails, e.g. because of native
+/// dependencies or an incompatible `pliron-lsp-api`).
+pub fn minimal_features(sel: &Selection) -> Selection {
+    let mut sel = sel.clone();
+    for d in &mut sel.dialects {
+        d.features.clear();
+    }
+    sel.api = None;
+    sel
+}
+
 /// `[workspace.metadata.pliron-lsp]` configuration.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -182,20 +241,6 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
         .iter()
         .find(|p| p.name == "pliron")
         .ok_or(NoBundle::NotPliron)?;
-    if (pliron.version.major, pliron.version.minor) != SUPPORTED_PLIRON {
-        return Err(NoBundle::Unsupported(format!(
-            "pliron {} is not supported (pliron-lsp instruments pliron {}.{}.x)",
-            pliron.version, SUPPORTED_PLIRON.0, SUPPORTED_PLIRON.1
-        )));
-    }
-    if !is_crates_io(pliron) {
-        return Err(NoBundle::Unsupported(format!(
-            "pliron from {} is not supported yet (only crates.io pliron {}.{}.x)",
-            pliron.source.as_ref().map(|s| s.repr.as_str()).unwrap_or("a local path"),
-            SUPPORTED_PLIRON.0,
-            SUPPORTED_PLIRON.1
-        )));
-    }
     let config: Config = meta
         .workspace_metadata
         .get("pliron-lsp")
@@ -245,14 +290,65 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
             name: pkg.name.clone(),
             version: pkg.version.to_string(),
             spec: dep_spec(pkg),
-            features: node.features.clone(),
+            features: dialect_features(&pkg.name, &node.features),
             dir,
         });
     }
     dialects.sort_by(|a, b| a.name.cmp(&b.name));
+    // Nothing beyond what the reference engine has (builtin + llvm).
+    if dialects.iter().all(|d| d.name == "pliron-llvm") {
+        return Err(NoBundle::NotPliron);
+    }
+
+    let Some((patch_version, _)) = patch_for(&pliron.version) else {
+        return Err(NoBundle::Unsupported(format!(
+            "pliron {} is not supported (pliron-lsp instruments pliron {})",
+            pliron.version,
+            supported_versions().join(", ")
+        )));
+    };
+    let pliron_dir = pliron.manifest_path.parent().unwrap().as_std_path().to_path_buf();
+    let source = if is_crates_io(pliron) {
+        let derive = meta
+            .packages
+            .iter()
+            .find(|p| p.name == "pliron-derive" && p.version == pliron.version)
+            .ok_or_else(|| NoBundle::Unsupported("pliron-derive not found".into()))?;
+        PlironSource::Registry {
+            pliron_dir,
+            derive_dir: derive.manifest_path.parent().unwrap().as_std_path().to_path_buf(),
+        }
+    } else {
+        match dep_spec(pliron) {
+            DepSpec::Git {
+                url,
+                reference,
+                rev,
+            } => PlironSource::Git {
+                url,
+                reference,
+                rev,
+                root: pliron_dir,
+            },
+            _ => {
+                return Err(NoBundle::Unsupported(
+                    "pliron from a local path is not supported (cargo cannot patch path dependencies)"
+                        .into(),
+                ));
+            }
+        }
+    };
+    let api = meta
+        .packages
+        .iter()
+        .find(|p| p.name == "pliron-lsp-api")
+        .map(dep_spec);
     Ok(Selection {
         pliron_version: pliron.version.to_string(),
+        pliron: source,
+        patch_version,
         dialects,
+        api,
     })
 }
 
@@ -262,6 +358,30 @@ fn toml_str(s: &str) -> String {
 
 fn toml_path(p: &Path) -> String {
     toml_str(&p.display().to_string())
+}
+
+/// Where a dependency comes from, as manifest fields.
+fn spec_fields(spec: &DepSpec) -> Vec<String> {
+    let mut fields = Vec::new();
+    match spec {
+        DepSpec::Path(p) => fields.push(format!("path = {}", toml_path(p))),
+        DepSpec::Registry { version } => {
+            fields.push(format!("version = {}", toml_str(&format!("={version}"))))
+        }
+        DepSpec::Git {
+            url,
+            reference,
+            rev,
+        } => {
+            fields.push(format!("git = {}", toml_str(url)));
+            match reference {
+                Some((k, v)) => fields.push(format!("{k} = {}", toml_str(v))),
+                None if !rev.is_empty() => fields.push(format!("rev = {}", toml_str(rev))),
+                None => {}
+            }
+        }
+    }
+    fields
 }
 
 /// The generated bundle manifest.
@@ -275,32 +395,26 @@ pub fn manifest(sel: &Selection, user_patches: &str) -> String {
     );
     for (i, d) in sel.dialects.iter().enumerate() {
         let mut fields = vec![format!("package = {}", toml_str(&d.name))];
-        match &d.spec {
-            DepSpec::Path(p) => fields.push(format!("path = {}", toml_path(p))),
-            DepSpec::Registry { version } => {
-                fields.push(format!("version = {}", toml_str(&format!("={version}"))))
-            }
-            DepSpec::Git {
-                url,
-                reference,
-                rev,
-            } => {
-                fields.push(format!("git = {}", toml_str(url)));
-                match reference {
-                    Some((k, v)) => fields.push(format!("{k} = {}", toml_str(v))),
-                    None if !rev.is_empty() => fields.push(format!("rev = {}", toml_str(rev))),
-                    None => {}
-                }
-            }
-        }
+        fields.extend(spec_fields(&d.spec));
         fields.push("default-features = false".into());
         let feats: Vec<String> = d.features.iter().map(|f| toml_str(f)).collect();
         fields.push(format!("features = [{}]", feats.join(", ")));
         writeln!(m, "d{i} = {{ {} }}", fields.join(", ")).unwrap();
     }
-    m.push_str(
-        "\n[patch.crates-io]\npliron = { path = \"vendor/pliron\" }\npliron-derive = { path = \"vendor/pliron-derive\" }\n",
-    );
+    // Use the instrumented copy of the project's own pliron.
+    match &sel.pliron {
+        PlironSource::Registry { .. } => m.push_str(
+            "\n[patch.crates-io]\npliron = { path = \"vendor/pliron\" }\npliron-derive = { path = \"vendor/pliron-derive\" }\n",
+        ),
+        PlironSource::Git { url, .. } => {
+            writeln!(
+                m,
+                "\n[patch.{}]\npliron = {{ path = \"vendor/pliron-git\" }}\npliron-derive = {{ path = \"vendor/pliron-git/pliron-derive\" }}\n\n[patch.crates-io]",
+                toml_str(url)
+            )
+            .unwrap();
+        }
+    }
     m.push_str(user_patches);
     m.push_str(
         "\n[profile.dev]\nopt-level = 1\ndebug = 0\nincremental = true\n\n\
@@ -380,7 +494,113 @@ fn clean_manifest(text: &str) -> String {
 }
 
 const PROTOCOL_MANIFEST: &str = "[package]\nname = \"pliron-lsp-protocol\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n";
-const ENGINE_MANIFEST: &str = "[package]\nname = \"pliron-lsp-engine\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\npliron = \"0.18\"\npliron-lsp-protocol = { path = \"../pliron-lsp-protocol\" }\nserde_json = \"1\"\n";
+/// The vendored engine's manifest: its `pliron` is the project's pliron
+/// (which the bundle patches with the instrumented copy).
+fn engine_manifest(sel: &Selection) -> String {
+    let pliron = match &sel.pliron {
+        PlironSource::Registry { .. } => toml_str(&format!("={}", sel.pliron_version)).to_string(),
+        PlironSource::Git {
+            url,
+            reference,
+            rev,
+            ..
+        } => {
+            let r = match reference {
+                Some((k, v)) => format!(", {k} = {}", toml_str(v)),
+                None if !rev.is_empty() => format!(", rev = {}", toml_str(rev)),
+                None => String::new(),
+            };
+            format!("{{ git = {}{r} }}", toml_str(url))
+        }
+    };
+    let cfg = format!("pliron_{}", sel.patch_version.replace('.', "_"));
+    // The project's own pliron-lsp-api, with its hooks turned on.
+    let (api, hooks) = match &sel.api {
+        Some(spec) => (
+            format!(
+                "pliron-lsp-api = {{ {}, features = [\"engine\"], optional = true }}\n",
+                spec_fields(spec).join(", ")
+            ),
+            ", \"hooks\"",
+        ),
+        None => (String::new(), ""),
+    };
+    format!(
+        "[package]\nname = \"pliron-lsp-engine\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\npliron = {pliron}\npliron-lsp-protocol = {{ path = \"../pliron-lsp-protocol\" }}\nserde_json = \"1\"\n{api}\n[features]\ndefault = [\"{cfg}\"{hooks}]\n{cfg} = []\nhooks = [{}]\n",
+        if sel.api.is_some() { "\"dep:pliron-lsp-api\"" } else { "" }
+    )
+}
+
+/// Copy the project's pliron sources into `dest` and instrument them.
+fn vendor_pliron(sel: &Selection, dest: &Path) -> anyhow::Result<()> {
+    let (_, diff) = embedded::PATCHES
+        .iter()
+        .find(|(v, _)| *v == sel.patch_version)
+        .context("missing instrumentation patch")?;
+    // Patch paths are relative to a pliron repository: `src/...` and
+    // `pliron-derive/src/...`.
+    let (pliron_src, derive_src, out_pliron, out_derive): (PathBuf, PathBuf, PathBuf, PathBuf) =
+        match &sel.pliron {
+            PlironSource::Registry {
+                pliron_dir,
+                derive_dir,
+            } => {
+                copy_tree(pliron_dir, &dest.join("pliron"))?;
+                copy_tree(derive_dir, &dest.join("pliron-derive"))?;
+                for c in ["pliron", "pliron-derive"] {
+                    let m = dest.join(c).join("Cargo.toml");
+                    let cleaned = clean_manifest(&std::fs::read_to_string(&m)?);
+                    write_if_changed(&m, cleaned.as_bytes())?;
+                }
+                (
+                    pliron_dir.clone(),
+                    derive_dir.clone(),
+                    dest.join("pliron"),
+                    dest.join("pliron-derive"),
+                )
+            }
+            PlironSource::Git { root, .. } => {
+                copy_tree(root, &dest.join("pliron-git"))?;
+                (
+                    root.clone(),
+                    root.join("pliron-derive"),
+                    dest.join("pliron-git"),
+                    dest.join("pliron-git/pliron-derive"),
+                )
+            }
+        };
+    let locate = |p: &str| -> (PathBuf, PathBuf) {
+        match p.strip_prefix("pliron-derive/") {
+            Some(rest) => (derive_src.join(rest), out_derive.join(rest)),
+            None => (pliron_src.join(p), out_pliron.join(p)),
+        }
+    };
+    let patched = crate::patcher::apply_in_memory(diff, |p| Ok(std::fs::read_to_string(locate(p).0).ok()))
+        .context("instrumenting pliron")?;
+    for (p, text) in patched {
+        write_if_changed(&locate(&p).1, text.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Mirror a source tree (skipping `target/` and VCS directories), writing
+/// only files whose content changed.
+fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
+    for e in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
+        let e = e?;
+        let name = e.file_name();
+        let p = e.path();
+        if p.is_dir() {
+            if name == "target" || name == ".git" {
+                continue;
+            }
+            copy_tree(&p, &to.join(&name))?;
+        } else if p.is_file() {
+            write_if_changed(&to.join(&name), &std::fs::read(&p)?)?;
+        }
+    }
+    Ok(())
+}
 
 /// Write `content` to `path` unless it already has exactly that content
 /// (so that cargo does not rebuild because of touched files).
@@ -409,6 +629,9 @@ pub fn generate(meta: &Metadata, sel: &Selection) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(&dir)?;
     for (rel, content) in embedded::FILES {
         let (krate, rest) = rel.split_once('/').unwrap();
+        if krate == "patches" {
+            continue;
+        }
         let path = dir.join("vendor").join(krate).join(rest);
         let content = if rest == "Cargo.toml" {
             clean_manifest(content)
@@ -423,8 +646,9 @@ pub fn generate(meta: &Metadata, sel: &Selection) -> anyhow::Result<PathBuf> {
     )?;
     write_if_changed(
         &dir.join("vendor/pliron-lsp-engine/Cargo.toml"),
-        ENGINE_MANIFEST.as_bytes(),
+        engine_manifest(sel).as_bytes(),
     )?;
+    vendor_pliron(sel, &dir.join("vendor"))?;
     write_if_changed(
         &dir.join("Cargo.toml"),
         manifest(sel, &user_patches(root)).as_bytes(),
@@ -591,7 +815,8 @@ pub fn describe(sel: &Selection) -> String {
             })
             .or_default() += 1;
     }
-    format!("{} dialect crate(s): {}", names.len(), names.join(", "))
+    let hooks = if sel.api.is_some() { " (with pliron-lsp-api hooks)" } else { "" };
+    format!("{} dialect crate(s): {}{hooks}", names.len(), names.join(", "))
 }
 
 #[cfg(test)]
@@ -612,6 +837,11 @@ mod tests {
     fn manifest_specs() {
         let sel = Selection {
             pliron_version: "0.18.0".into(),
+            pliron: PlironSource::Registry {
+                pliron_dir: "/p".into(),
+                derive_dir: "/d".into(),
+            },
+            patch_version: "0.18",
             dialects: vec![
                 DialectCrate {
                     name: "my-dialect".into(),
@@ -641,6 +871,7 @@ mod tests {
                     dir: "/g".into(),
                 },
             ],
+            api: Some(DepSpec::Path("/w/api".into())),
         };
         let m = manifest(&sel, "");
         assert!(m.contains(r#"d0 = { package = "my-dialect", path = "/w/my dialect", default-features = false, features = ["default"] }"#), "{m}");
@@ -648,6 +879,12 @@ mod tests {
         assert!(m.contains(r#"d2 = { package = "g", git = "https://github.com/a/b", branch = "main", default-features = false, features = [] }"#), "{m}");
         assert!(m.contains("pliron = { path = \"vendor/pliron\" }"));
         assert!(m.parse::<toml::Table>().is_ok());
+        // Hooks: the engine uses the project's pliron-lsp-api in engine mode.
+        let e = engine_manifest(&sel);
+        let t: toml::Table = e.parse().unwrap();
+        assert_eq!(t["dependencies"]["pliron-lsp-api"]["path"].as_str(), Some("/w/api"), "{e}");
+        assert_eq!(t["features"]["default"].as_array().unwrap().len(), 2, "{e}");
+        assert!(!engine_manifest(&minimal_features(&sel)).contains("pliron-lsp-api"));
     }
 
     #[test]
@@ -655,8 +892,33 @@ mod tests {
         let names: Vec<&str> = embedded::FILES.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"pliron-lsp-engine/src/lib.rs"));
         assert!(names.contains(&"pliron-lsp-protocol/src/lib.rs"));
-        assert!(names.contains(&"pliron/src/lsp.rs"));
-        assert!(names.contains(&"pliron-derive/src/lib.rs"));
-        assert!(names.contains(&"pliron/Cargo.toml"));
+        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18"]);
+        for (_, p) in embedded::PATCHES {
+            assert!(p.contains("+++ b/src/lsp.rs"));
+        }
+    }
+
+    #[test]
+    fn git_pliron_manifest() {
+        let sel = Selection {
+            pliron_version: "0.17.0".into(),
+            pliron: PlironSource::Git {
+                url: "https://github.com/pliron-org/pliron.git".into(),
+                reference: Some(("rev".into(), "e23ff9f".into())),
+                rev: "e23ff9f".into(),
+                root: "/r".into(),
+            },
+            patch_version: "0.17",
+            dialects: vec![],
+            api: None,
+        };
+        let m = manifest(&sel, "x = { path = \"/x\" }\n");
+        assert!(m.contains("[patch.\"https://github.com/pliron-org/pliron.git\"]\npliron = { path = \"vendor/pliron-git\" }"), "{m}");
+        assert!(m.contains("[patch.crates-io]\nx = { path = \"/x\" }"), "{m}");
+        assert!(m.parse::<toml::Table>().is_ok(), "{m}");
+        let e = engine_manifest(&sel);
+        assert!(e.contains("pliron = { git = \"https://github.com/pliron-org/pliron.git\", rev = \"e23ff9f\" }"), "{e}");
+        assert!(e.contains("default = [\"pliron_0_17\"]"), "{e}");
+        assert!(e.parse::<toml::Table>().is_ok(), "{e}");
     }
 }

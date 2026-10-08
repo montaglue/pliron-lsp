@@ -118,6 +118,77 @@ suite("pliron extension", () => {
     await vscode.commands.executeCommand("pliron.serverVersion");
   });
 
+  test("reference counts above functions", async () => {
+    const lenses = await until("code lenses", async () => {
+      const l = await vscode.commands.executeCommand<vscode.CodeLens[]>(
+        "vscode.executeCodeLensProvider",
+        docUri
+      );
+      return l && l.length === 2 ? l : undefined;
+    });
+    assert.deepStrictEqual(
+      lenses.map((l) => l.command?.title),
+      ["1 reference", "0 references"]
+    );
+    const cmd = lenses[0].command!;
+    assert.strictEqual(cmd.command, "pliron.showReferences");
+    // Opens the reference peek without throwing.
+    await vscode.commands.executeCommand(cmd.command, ...(cmd.arguments ?? []));
+  });
+
+  test("rename: symbols, and local names with scope checks", async () => {
+    const edit = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
+      "vscode.executeDocumentRenameProvider",
+      docUri,
+      positionOf(doc, "@callee:", 1),
+      "target"
+    );
+    assert.strictEqual(edit.get(docUri).length, 2);
+    const local = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
+      "vscode.executeDocumentRenameProvider",
+      docUri,
+      positionOf(doc, "z = llvm"),
+      "sum"
+    );
+    assert.strictEqual(local.get(docUri).length, 3);
+    await assert.rejects(
+      Promise.resolve(
+        vscode.commands.executeCommand(
+          "vscode.executeDocumentRenameProvider",
+          docUri,
+          positionOf(doc, "z = llvm"),
+          "y2"
+        )
+      ),
+      /already names another value/
+    );
+  });
+
+  test("source locations are links", async () => {
+    const uri = vscode.Uri.file(path.join(ws, "located.pliron"));
+    await vscode.workspace.openTextDocument(uri);
+    const links = await until("links", async () => {
+      const l = await vscode.commands.executeCommand<vscode.DocumentLink[]>(
+        "vscode.executeLinkProvider",
+        uri
+      );
+      return l && l.length > 0 ? l : undefined;
+    });
+    const target = links[0].target!;
+    assert.ok(target.fsPath.endsWith(path.join("src", "kernel.rs")), target.toString());
+    assert.strictEqual(target.fragment, "L2,5");
+    // Following the link opens the file at that line and column.
+    await vscode.commands.executeCommand("vscode.open", target);
+    const editor = await until("kernel.rs editor", async () => {
+      const e = vscode.window.activeTextEditor;
+      return e?.document.uri.fsPath.endsWith("kernel.rs") ? e : undefined;
+    });
+    assert.deepStrictEqual(
+      [editor.selection.active.line, editor.selection.active.character],
+      [1, 4]
+    );
+  });
+
   test("server location", async () => {
     const api = vscode.extensions.getExtension("pliron-lsp.pliron")!.exports;
     const source = api.ctx.server?.source;

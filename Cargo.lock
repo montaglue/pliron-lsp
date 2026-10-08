@@ -622,11 +622,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pliron-lsp-api"
+version = "0.1.0"
+dependencies = [
+ "linkme",
+ "pliron",
+]
+
+[[package]]
 name = "pliron-lsp-engine"
 version = "0.1.0"
 dependencies = [
  "pliron",
  "pliron-llvm",
+ "pliron-lsp-api",
  "pliron-lsp-protocol",
  "serde_json",
 ]

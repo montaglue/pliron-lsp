@@ -121,7 +121,9 @@ pub fn spawn(root: PathBuf, tx: Sender<JobEvent>) {
         .expect("spawn bundle job");
 }
 
-fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathBuf])) -> Outcome {
+/// Prepare (generate + build) the dialect engine of the project at `root`,
+/// synchronously.
+pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathBuf])) -> Outcome {
     progress("reading cargo metadata".into());
     let meta = match bundle::load_metadata(root) {
         Ok(m) => m,
@@ -141,11 +143,34 @@ fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathBuf])
         Ok(d) => d,
         Err(e) => return Outcome::Failed(format!("{e:#}")),
     };
-    let exe = match bundle::build(&meta, &dir, |ev| match ev {
-        BuildEvent::Progress(m) => progress(m),
-    }) {
+    let build = |sel: &bundle::Selection| -> anyhow::Result<PathBuf> {
+        let dir = bundle::generate(&meta, sel)?;
+        bundle::build(&meta, &dir, |ev| match ev {
+            BuildEvent::Progress(m) => progress(m),
+        })
+    };
+    let _ = dir;
+    let exe = match build(&sel) {
         Ok(exe) => exe,
-        Err(e) => return Outcome::Failed(format!("{e:#}")),
+        Err(first) => {
+            // Native dependencies enabled by the project's features may not
+            // build here; the dialects themselves rarely need them.
+            progress("retrying with minimal features".into());
+            match build(&bundle::minimal_features(&sel)) {
+                Ok(exe) => exe,
+                Err(_) => {
+                    let mut msg = format!("{first:#}");
+                    if msg.contains("requires rustc") {
+                        msg.push_str(
+                            "\nhint: the project needs a newer Rust toolchain than the one cargo selected; \
+                             add a rust-toolchain.toml to the project or set RUSTUP_TOOLCHAIN \
+                             (in VS Code: `pliron.server.extraEnv`)",
+                        );
+                    }
+                    return Outcome::Failed(msg);
+                }
+            }
+        }
     };
     let mut watched = bundle::watched_dirs(&sel);
     watched.push(root.join("Cargo.toml"));

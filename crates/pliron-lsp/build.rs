@@ -26,19 +26,9 @@ fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let crates = manifest.parent().unwrap();
     let repo = crates.parent().unwrap();
-    let sources: [(&str, PathBuf, &[&str]); 4] = [
+    let sources: [(&str, PathBuf, &[&str]); 2] = [
         ("pliron-lsp-protocol", crates.join("pliron-lsp-protocol"), &[]),
         ("pliron-lsp-engine", crates.join("pliron-lsp-engine"), &[]),
-        (
-            "pliron",
-            repo.join("third_party/pliron-0.18.0"),
-            &["Cargo.toml", "LICENSE.md", "NOTICE", "README.md"],
-        ),
-        (
-            "pliron-derive",
-            repo.join("third_party/pliron-derive-0.18.0"),
-            &["Cargo.toml", "LICENSE.md", "README.md"],
-        ),
     ];
     let mut files = Vec::new();
     for (name, dir, extra) in &sources {
@@ -51,6 +41,21 @@ fn main() {
             }
         }
     }
+    // Instrumentation patches, one per supported pliron version line.
+    let patches_dir = repo.join("third_party/patches");
+    println!("cargo:rerun-if-changed={}", patches_dir.display());
+    let mut patches = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&patches_dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            if let Some(v) = name.strip_prefix("pliron-").and_then(|n| n.strip_suffix(".patch")) {
+                patches.push((v.to_string(), p.clone()));
+                files.push((format!("patches/{name}"), p));
+            }
+        }
+    }
+    patches.sort();
     let mut hash: u64 = 0xcbf29ce484222325;
     let mut code = String::from("pub static FILES: &[(&str, &str)] = &[\n");
     for (rel, path) in &files {
@@ -60,6 +65,11 @@ fn main() {
             hash = hash.wrapping_mul(0x100000001b3);
         }
         writeln!(code, "    ({rel:?}, include_str!({:?})),", path.display().to_string()).unwrap();
+    }
+    code.push_str("];\n");
+    code.push_str("/// (pliron version line, patch)\npub static PATCHES: &[(&str, &str)] = &[\n");
+    for (v, p) in &patches {
+        writeln!(code, "    ({v:?}, include_str!({:?})),", p.display().to_string()).unwrap();
     }
     code.push_str("];\n");
     writeln!(code, "pub const SRC_HASH: &str = \"{hash:016x}\";").unwrap();

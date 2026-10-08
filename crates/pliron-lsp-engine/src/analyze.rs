@@ -1,7 +1,7 @@
 //! Parse + verify a document with the instrumented pliron and convert the
 //! result into the protocol model.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use pliron::basic_block::BasicBlock;
@@ -56,6 +56,8 @@ pub(crate) fn panicked(text_hash: u64, message: String) -> AnalyzeResult {
         verify_errors: Vec::new(),
         model: None,
         spans: Vec::new(),
+        hook_diags: Vec::new(),
+        hook_hints: Vec::new(),
         elapsed_us: 0,
     }
 }
@@ -107,16 +109,45 @@ pub fn analyze(params: &AnalyzeParams) -> AnalyzeResult {
         .collect();
 
     let mut verify_errors = Vec::new();
-    if let (Some(top), true, VerifyMode::First) =
-        (top_op, parse_errors.is_empty(), params.verify)
-        && let Err(e) = verify_operation(top, &ctx)
-    {
-        verify_errors.push(EngineDiag {
-            phase: DiagPhase::Verify,
-            pos: loc_pos(&e.loc),
-            message: e.err.to_string(),
-            op: None,
-        });
+    // Ops known to pass verification (lints only run on those).
+    let mut verified = false;
+    let mut failed_ops = HashSet::new();
+    if let (Some(top), true) = (top_op, parse_errors.is_empty()) {
+        match params.verify {
+            VerifyMode::Off => {}
+            VerifyMode::First => {
+                if let Err(e) = verify_operation(top, &ctx) {
+                    verify_errors.push(EngineDiag {
+                        phase: DiagPhase::Verify,
+                        pos: loc_pos(&e.loc),
+                        message: e.err.to_string(),
+                        op: None,
+                    });
+                }
+                verified = verify_errors.is_empty();
+            }
+            VerifyMode::All => {
+                (verify_errors, failed_ops) = verify_all(top, &ctx);
+                verified = true;
+            }
+        }
+    }
+
+    // Dialect hooks (pliron-lsp-api).
+    let mut hook_diags = Vec::new();
+    let mut hook_hints = Vec::new();
+    if top_op.is_some() && crate::hooks::any() {
+        let mut ops: Vec<(Ptr<Operation>, u32)> = b.ops.iter().map(|(p, i)| (*p, *i)).collect();
+        ops.sort_by_key(|(_, i)| *i);
+        for (op, id) in ops {
+            if verified && !failed_ops.contains(&op) {
+                crate::hooks::lint(&ctx, op, id, &mut hook_diags);
+            }
+            if params.want_model {
+                b.model.ops[id as usize].notes = crate::hooks::hover(&ctx, op);
+                crate::hooks::inlay(&ctx, op, id, &mut hook_hints);
+            }
+        }
     }
 
     let model = top_op.map(|_| std::mem::take(&mut b.model));
@@ -126,8 +157,88 @@ pub fn analyze(params: &AnalyzeParams) -> AnalyzeResult {
         verify_errors,
         model: if params.want_model { model } else { None },
         spans,
+        hook_diags,
+        hook_hints,
         elapsed_us: started.elapsed().as_micros() as u64,
     }
+}
+
+/// Verify every operation and every block separately, collecting all
+/// errors (pliron's `verify_operation` stops at the first one). Each check
+/// is pliron's own verifier; errors found again through a parent are
+/// reported once. Also returns the ops that failed their own verification.
+fn verify_all(top: Ptr<Operation>, ctx: &Context) -> (Vec<EngineDiag>, HashSet<Ptr<Operation>>) {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use pliron::common_traits::Verify;
+
+    fn collect(
+        ctx: &Context,
+        op: Ptr<Operation>,
+        ops: &mut Vec<Ptr<Operation>>,
+        blocks: &mut Vec<Ptr<BasicBlock>>,
+    ) {
+        ops.push(op);
+        let regions: Vec<_> = op.deref(ctx).regions().collect();
+        for r in regions {
+            let bs: Vec<_> = r.deref(ctx).iter(ctx).collect();
+            for b in bs {
+                blocks.push(b);
+                let children: Vec<_> = b.deref(ctx).iter(ctx).collect();
+                for c in children {
+                    collect(ctx, c, ops, blocks);
+                }
+            }
+        }
+    }
+    let mut ops = Vec::new();
+    let mut blocks = Vec::new();
+    collect(ctx, top, &mut ops, &mut blocks);
+
+    let mut out: Vec<EngineDiag> = Vec::new();
+    let mut push = |pos: Option<Pos>, message: String| {
+        if !out.iter().any(|d| d.pos == pos && d.message == message) {
+            out.push(EngineDiag {
+                phase: DiagPhase::Verify,
+                pos,
+                message,
+                op: None,
+            });
+        }
+    };
+    let mut failed = HashSet::new();
+    // Innermost first, so that an error is attributed to the deepest entity
+    // reporting it.
+    for op in ops.iter().rev() {
+        let loc = op.deref(ctx).loc();
+        match catch_unwind(AssertUnwindSafe(|| op.deref(ctx).verify(ctx))) {
+            Ok(Ok(())) => continue,
+            Ok(Err(e)) => push(loc_pos(&e.loc).or(loc_pos(&loc)), e.err.to_string()),
+            Err(_) => push(
+                loc_pos(&loc),
+                format!("the verifier panicked: {}", crate::take_panic()),
+            ),
+        }
+        failed.insert(*op);
+    }
+    for b in blocks.iter().rev() {
+        let loc = b.deref(ctx).loc();
+        match catch_unwind(AssertUnwindSafe(|| b.deref(ctx).verify(ctx))) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => push(loc_pos(&e.loc).or(loc_pos(&loc)), e.err.to_string()),
+            Err(_) => push(
+                loc_pos(&loc),
+                format!("the verifier panicked: {}", crate::take_panic()),
+            ),
+        }
+    }
+    if let Ok(Err(e)) = catch_unwind(AssertUnwindSafe(|| {
+        pliron::operation::verify_value_dominance(top, ctx)
+    })) {
+        push(loc_pos(&e.loc), e.err.to_string());
+    }
+    out.sort_by_key(|d| d.pos);
+    (out, failed)
 }
 
 struct ModelBuilder<'c> {
@@ -402,6 +513,13 @@ impl<'c> ModelBuilder<'c> {
             ),
             Event::AttrKey { start, end } => (*start, *end, SpanKind::AttrKey),
             Event::Keyword { start, end } => (*start, *end, SpanKind::Keyword),
+            Event::Token { kind, start, end } => (
+                *start,
+                *end,
+                SpanKind::Token {
+                    token_type: kind.to_string(),
+                },
+            ),
             Event::Region { open, close, .. } => (
                 *open,
                 close.unwrap_or(*open),
@@ -529,6 +647,93 @@ mod tests {
         let m = r.model.unwrap();
         assert!(m.ops.iter().any(|o| o.opid == "llvm.call"));
         assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::OperandUse { .. }) && text_at(&text, s) == "z"));
+    }
+
+    #[test]
+    fn reports_every_verifier_error() {
+        // Two functions whose entry blocks lack a terminator.
+        let text = "builtin.module @m {\n  ^entry():\n  builtin.func @a: builtin.function <() -> ()> {\n    ^bb0():\n    c = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64\n  };\n  builtin.func @b: builtin.function <() -> ()> {\n    ^bb1():\n    d = builtin.constant <builtin.integer <2: i64>> : builtin.integer i64\n  }\n}\n";
+        let r = analyze(&AnalyzeParams {
+            text_hash: text_hash(text),
+            text: text.to_string(),
+            verify: VerifyMode::All,
+            want_model: true,
+            max_attr_len: 200,
+        });
+        assert!(r.parse_errors.is_empty(), "{:?}", r.parse_errors);
+        let lines: Vec<u32> = r.verify_errors.iter().filter_map(|d| d.pos.map(|p| p.line)).collect();
+        assert!(lines.contains(&4) && lines.contains(&8), "{:#?}", r.verify_errors);
+        // pliron's own verify_operation stops at the first.
+        let first = run(text);
+        assert_eq!(first.verify_errors.len(), 1);
+    }
+
+    /// Hooks registered with pliron-lsp-api (in engine mode).
+    #[cfg(feature = "hooks")]
+    mod hooks {
+        use super::*;
+        use pliron_lsp_api::{Diagnostics, InlayHints, Target};
+        use pliron_lsp_protocol::{HookSeverity, HookTarget};
+
+        fn is(ctx: &Context, op: Ptr<Operation>, name: &str) -> bool {
+            Operation::get_opid(op, ctx).to_string() == name
+        }
+
+        fn unused_constants(ctx: &Context, op: Ptr<Operation>, diags: &mut Diagnostics) {
+            if is(ctx, op, "builtin.constant") && !op.deref(ctx).get_result(0).is_used(ctx) {
+                diags.warning("unused constant").at(Target::Result(0));
+            }
+        }
+        pliron_lsp_api::lint!(unused_constants);
+
+        fn panicky(ctx: &Context, op: Ptr<Operation>, _: &mut Diagnostics) {
+            if is(ctx, op, "llvm.return") {
+                panic!("boom");
+            }
+        }
+        pliron_lsp_api::lint!(panicky);
+
+        fn func_note(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
+            is(ctx, op, "llvm.func").then(|| "an LLVM function".to_string())
+        }
+        pliron_lsp_api::hover!(func_note);
+
+        fn first_operand(ctx: &Context, op: Ptr<Operation>, hints: &mut InlayHints) {
+            if is(ctx, op, "llvm.add") {
+                hints.add(Target::Operand(0), "lhs:");
+            }
+        }
+        pliron_lsp_api::inlay!(first_operand);
+
+        #[test]
+        fn hooks_run() {
+            assert!(crate::hooks::names().iter().any(|n| n.ends_with("unused_constants")));
+            let text = DEMO.replace(
+                "    llvm.return r\n  }\n}",
+                "    k = builtin.constant <builtin.integer <7: i64>> : builtin.integer i64;\n    llvm.return r\n  }\n}",
+            );
+            let r = analyze(&AnalyzeParams {
+                text_hash: text_hash(&text),
+                text: text.clone(),
+                verify: VerifyMode::All,
+                want_model: true,
+                max_attr_len: 200,
+            });
+            assert!(r.parse_errors.is_empty() && r.verify_errors.is_empty(), "{r:#?}");
+            let m = r.model.as_ref().unwrap();
+            let unused: Vec<_> = r.hook_diags.iter().filter(|d| d.message == "unused constant").collect();
+            // `one` is used by cond_br, `y` by the branch; only `k` is unused.
+            assert_eq!(unused.len(), 1, "{:#?}", r.hook_diags);
+            assert_eq!(unused[0].severity, HookSeverity::Warning);
+            assert_eq!(unused[0].target, HookTarget::Result { index: 0 });
+            let k = m.ops[unused[0].op as usize].results[0];
+            assert_eq!(m.values[k as usize].given_name.as_deref(), Some("k"));
+            assert!(unused[0].source.ends_with("unused_constants"));
+            // A panicking hook is reported, not fatal.
+            assert!(r.hook_diags.iter().any(|d| d.message.contains("panicked: boom")), "{:#?}", r.hook_diags);
+            assert!(m.ops.iter().filter(|o| o.opid == "llvm.func").all(|o| o.notes == ["an LLVM function"]));
+            assert!(r.hook_hints.iter().any(|h| h.label == "lhs:" && h.target == HookTarget::Operand { index: 0 }));
+        }
     }
 
     #[test]

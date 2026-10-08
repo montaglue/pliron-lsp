@@ -23,7 +23,7 @@ use pliron_lsp_protocol::{
 /// Messages from engine I/O threads to the main loop.
 #[derive(Debug)]
 pub enum EngineEvent {
-    Response { key: String, generation: u64, response: Response },
+    Response { key: String, generation: u64, response: Box<Response> },
     Exited { key: String, generation: u64 },
 }
 
@@ -147,7 +147,7 @@ impl Engine {
                             let _ = events.send(EngineEvent::Response {
                                 key: key.clone(),
                                 generation,
-                                response,
+                                response: Box::new(response),
                             });
                         }
                         Err(e) => eprintln!("[engine] bad response: {e}"),
@@ -212,7 +212,7 @@ impl Engine {
                 Pending::Analyze { text, hash, .. } => RequestBody::Analyze(AnalyzeParams {
                     text_hash: *hash,
                     text: text.clone(),
-                    verify: VerifyMode::First,
+                    verify: VerifyMode::All,
                     want_model: true,
                     max_attr_len: 200,
                 }),

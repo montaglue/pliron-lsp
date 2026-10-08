@@ -11,15 +11,32 @@ of your dialects drive highlighting, diagnostics, navigation and type hints.
 
 | Feature | Notes |
 |---|---|
-| Diagnostics | Real pliron parse and verifier errors. Parsing recovers from errors, so you get several per file, and undefined names are reported where they are used. |
+| Diagnostics | Real pliron parse and verifier errors. Parsing recovers from errors and every op and block is verified separately, so you get all errors in a file, not just the first. Undefined names are reported where they are used. |
+| Quick fixes | "Did you mean `llvm.add`?" for unknown ops, types, attributes and dialects (from the dialect sources); similar names for undefined values and labels; insert or remove `;`; insert missing brackets. |
 | Semantic highlighting | Every word is classified by what the dialect's parser actually parsed it as: op names, types, attributes, keys, format keywords, values, block labels. Words in hand-written parsers, such as `if`/`else` in `llvm.cond_br`, are recognised as keywords. |
 | Go to definition | SSA values, block labels, `@symbols`, and op, type and attribute names. Names jump **into the Rust source** of the dialect. |
-| References, highlight, rename | Values, labels, symbols. |
+| References, highlight, rename | Values, block arguments and labels within their pliron name scope; a rename that would clash with another name of the scope is refused. `@symbols` across the workspace's IR files: the definition in the current file (or the one file defining it) and every reference to it; other files' own `@name` are left alone. |
+| Reference counts | "N references" above every `@function` (code lens), counted across the workspace; click to peek them. |
+| Source locations | `"src/kernel.rs": line: 12, column: 5` in `outlined_attributes:` (also inside `fused`/`callsite`/`name` locations) is a link to that file and position; Cmd-click or peek-definition shows the code. Relative paths are resolved against the IR file's directory and its parents, then the workspace folders. |
 | Hover | Exact value types (as printed by pliron), the defining op, op signatures and attributes, and **Rust doc comments** of ops, types and attributes. |
 | Type inlay hints | Result types that the op's syntax does not spell out, e.g. the result of `llvm.call`. |
-| Completion | In-scope values (with types), `^labels`, `@symbols`, op names (with docs). |
+| Completion | In-scope values (with types), `^labels`, `@symbols`, op names with docs and a **snippet of their syntax** generated from the op's format string (`llvm.icmp ${1:opd0} <${2:predicate}> ${3:opd1} : ${4:type}`). |
+| Signature help | While writing an op, its syntax from the format string, with the current part highlighted. |
+| Formatting | Indentation and whitespace only (re-printing with pliron would rename values); detects pliron's printer style or a compact style per file. |
+| Workspace symbols, call hierarchy | `@symbols` across all `.pliron`/`.plir` files of the workspace; go to a symbol defined in another file; incoming/outgoing references of `@functions`. |
 | Outline, folding | Symbol ops, regions, blocks. |
 | Hot reload | Saving a dialect `.rs` file re-indexes its docs immediately and rebuilds the engine incrementally (seconds), so edits to parsers and verifiers show up while you work. |
+
+## Command line
+
+```sh
+pliron-lsp check [paths]        # lint .pliron/.plir files, e.g. in CI (exit 1 on errors)
+pliron-lsp check --format json  # machine-readable findings
+pliron-lsp fmt [--check] [paths]
+```
+
+`check` uses exactly what the editor uses: the project's dialect engine
+(built if needed), the reference engine, or the syntax layer.
 
 ## Quick start
 
@@ -106,12 +123,69 @@ exclude = ["my-codegen-backend"] # never link these into the engine
 LSP initialization options are `enginePath`, `disableEngine` and
 `disableBundles`; the VS Code settings live under `pliron.*`.
 
+## Customizing from a dialect (optional)
+
+Everything above works without touching the dialect crates. To change or
+extend what the server derives, a dialect crate can depend on
+[`pliron-lsp-api`](crates/pliron-lsp-api):
+
+```toml
+[dependencies]
+pliron-lsp-api = { git = "https://github.com/montaglue/pliron-lsp" }
+```
+
+| Macro | What it does | Takes effect |
+|---|---|---|
+| `hints!` | Docs, format, completion snippet, operand names and syntax facts per op/type/attr. They override what is derived from `#[pliron_op(...)]` and doc comments, which matters most for hand-written parsers. | immediately (read from the source) |
+| `keyword!`, `token!` | Drop-in parsers for hand-written `Parsable` impls that tell the server how to highlight what they parse. | after the engine rebuild |
+| `lint!` | Extra diagnostics for each verified op; shown in the editor and by `pliron-lsp check`. | after the engine rebuild |
+| `hover!` | Extra markdown in an op's hover. | after the engine rebuild |
+| `inlay!` | Extra inlay hints at an op, its results or its operands. | after the engine rebuild |
+
+```rust
+use pliron::context::{Context, Ptr};
+use pliron::operation::Operation;
+use pliron_lsp_api::{Diagnostics, Target};
+
+fn self_add(ctx: &Context, op: Ptr<Operation>, diags: &mut Diagnostics) {
+    if Operation::get_op::<AddOp>(op, ctx).is_some() {
+        let o = op.deref(ctx);
+        if o.get_operand(0) == o.get_operand(1) {
+            diags.warning("adds a value to itself").at(Target::Operand(1));
+        }
+    }
+}
+pliron_lsp_api::lint!(self_add);
+
+pliron_lsp_api::hints! {
+    op "toy.repeat" { format: "$count `times`", snippet: "${1:2} times", keywords: ["times"] }
+}
+```
+
+In normal builds the crate has no dependencies and the macros expand to
+type checks only, so it adds no code to the dialect. The engine the server
+builds turns the hooks on. A hook that panics is reported as a warning
+instead of crashing the analysis. [examples/toy](examples/toy) uses every
+macro.
+
 ## Requirements and limitations
 
 **Supported projects**
-- Automatic engines need **pliron 0.18.x from crates.io**. Other versions
-  or sources fall back to the syntax layer, with a message.
+- Project engines are built for pliron **0.16, 0.17 and 0.18**, from crates.io
+  or from a git dependency: the project's own pliron source is instrumented
+  with the matching patch from [third_party/patches](third_party/patches).
+  pliron as a local `path` dependency is not supported (cargo cannot
+  `[patch]` path dependencies).
+- Tested on large real projects: **cubecl** (pliron 0.17 git, 6 dialect
+  crates including `pliron-spirv` with ~780 ops) and **cuda-oxide** (pliron
+  0.16 git, pinned nightly, ~490 `mir`/`nvvm` ops).
 - Crates that need `rustc_private` are skipped automatically.
+  pliron-llvm is built without its `llvm-sys` feature (the server never
+  needs LLVM); if a build with the project's features fails, it is retried
+  with minimal features.
+- The engine builds with the project's toolchain. If the project needs a
+  newer rustc than the one selected, add a `rust-toolchain.toml` or set
+  `RUSTUP_TOOLCHAIN` (VS Code: `pliron.server.extraEnv`).
 
 **What building runs**
 - Building an engine compiles the dialect crates and runs their build
@@ -119,8 +193,8 @@ LSP initialization options are `enginePath`, `disableEngine` and
   workspaces.
 
 **Analysis scope**
-- Verification reports the first verifier error.
-- Analysis is per document; there are no cross-file symbols.
+- Exact analysis is per document (pliron's one-module-per-file model);
+  `@symbols` are additionally resolved across the workspace's IR files.
 
 ## Development
 

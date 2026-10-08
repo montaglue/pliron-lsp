@@ -27,11 +27,21 @@ This file is served by the reference engine bundled with the extension.
     a `macro_rules!` macro.
   - `builtin.constant` opens pliron's builtin dialect.
   - `z`, `^bb2` and `@callee` jump to their definitions.
+- **Rename** (F2) `z` or `^bb2`; renaming `z` to `y2` is refused because
+  `y2` already exists in the function. Renaming `@callee` also updates
+  other `.pliron` files that call it.
+- **References** above `@callee`: "1 reference"; click it to peek.
 - **Hover** shows exact types, op signatures, attributes and the Rust docs.
 - **Inlay hints.** `r = llvm.call ...` shows `: builtin.integer i64`, a type
   the text does not spell out.
 - **Errors.** Change `llvm.add` to `llvm.ad`, or use an undefined value. The
   real parser reports both, and keeps parsing after the first error.
+
+## `llvm/located.pliron`: source locations
+
+The `outlined_attributes:` section records where each op came from
+(`"src/kernel.rs": line: 4, column: 5`). These are links: Cmd-click one to
+open `llvm/src/kernel.rs` at that position, or peek it with Alt-F12.
 
 ## `toy/`: a custom dialect, picked up with no setup
 
@@ -49,6 +59,18 @@ This file is served by the reference engine bundled with the extension.
    2. After the rebuild, `toy.print value = c` is reported as an error.
    3. `toy.print show c` is accepted, and `show` is highlighted as a
       keyword.
+
+4. Customization with `pliron-lsp-api` (optional; see the end of
+   `toy-dialect/src/lib.rs`):
+   - `e = toy.add c, c` gets a warning on the second `c` from the dialect's
+     own lint.
+   - Hovering `toy.add` shows how often its result is used, and unused
+     results get an `(unused)` inlay hint.
+   - `toy.repeat 3 times` has a hand-written parser: `3` is highlighted as a
+     number and `times` as a keyword, because the parser uses
+     `pliron_lsp_api::token!` and `keyword!`.
+   - Typing `toy.rep` completes to `toy.repeat 2 times`, from the dialect's
+     `hints!`.
 
 From the command palette (or by clicking the status bar item), try
 **pliron: View Engine Model**, **View Syntax Tree**, **Show Dialect

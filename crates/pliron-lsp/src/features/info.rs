@@ -91,6 +91,11 @@ fn op_hover(x: &Exact, op: u32) -> String {
     if !traits.is_empty() {
         s.push_str(&format!("\n\n*{}*", traits.join(" · ")));
     }
+    // From the dialect's hover hooks.
+    for note in &o.notes {
+        s.push_str("\n\n");
+        s.push_str(note);
+    }
     s
 }
 
@@ -261,7 +266,8 @@ fn top_level_types(x: &Exact, op: u32) -> Vec<&str> {
         .collect()
 }
 
-/// Inlay hints: result types that the op's syntax does not spell out.
+/// Inlay hints: result types that the op's syntax does not spell out, and
+/// hints from the dialect's inlay hooks.
 pub fn inlay_hints(doc: &Document, range: (Offset, Offset), enc: Encoding) -> Vec<InlayHint> {
     let Some(x) = doc.fresh_exact() else {
         return Vec::new();
@@ -291,5 +297,21 @@ pub fn inlay_hints(doc: &Document, range: (Offset, Offset), enc: Encoding) -> Ve
             data: None,
         });
     }
+    for h in &x.hints {
+        if h.offset < range.0 || h.offset > range.1 {
+            continue;
+        }
+        out.push(InlayHint {
+            position: doc.position(h.offset, enc),
+            label: InlayHintLabel::String(h.label.clone()),
+            kind: h.before.then_some(InlayHintKind::PARAMETER),
+            text_edits: None,
+            tooltip: None,
+            padding_left: Some(!h.before),
+            padding_right: Some(h.before),
+            data: None,
+        });
+    }
+    out.sort_by_key(|h| (h.position.line, h.position.character));
     out
 }

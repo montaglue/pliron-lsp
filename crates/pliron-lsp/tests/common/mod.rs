@@ -31,9 +31,11 @@ impl Client {
                 "capabilities": {
                     "general": { "positionEncodings": ["utf-16"] },
                     "window": { "workDoneProgress": true },
+                    "textDocument": { "completion": { "completionItem": { "snippetSupport": true } } },
                     "workspace": {
                         "semanticTokens": { "refreshSupport": true },
                         "inlayHint": { "refreshSupport": true },
+                        "codeLens": { "refreshSupport": true },
                         "didChangeWatchedFiles": { "dynamicRegistration": true }
                     }
                 },
@@ -52,6 +54,14 @@ impl Client {
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Value {
+        match self.try_request(method, params) {
+            Ok(v) => v,
+            Err(e) => panic!("{method} failed: {e}"),
+        }
+    }
+
+    /// A request that may fail; the error is the response's message.
+    pub fn try_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.next_id += 1;
         let id = RequestId::from(self.next_id);
         self.conn
@@ -68,9 +78,9 @@ impl Client {
             match msg {
                 Message::Response(r) if r.id == id => {
                     if let Some(e) = r.error {
-                        panic!("{method} failed: {e:?}");
+                        return Err(e.message);
                     }
-                    return r.result.unwrap_or(Value::Null);
+                    return Ok(r.result.unwrap_or(Value::Null));
                 }
                 Message::Notification(n) => self.notifications.push(n),
                 _ => {}

@@ -1,0 +1,21 @@
+[package]
+name = "pliron-lsp-api"
+description = "Optional hooks for pliron dialects to customize pliron-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies in normal builds: the macros only type-check their
+# arguments. pliron-lsp's generated engine enables `engine`.
+[dependencies]
+linkme = { version = "0.3", optional = true }
+
+[features]
+# Internal: enabled by the engine that pliron-lsp builds for a project.
+# Requires pliron-lsp's instrumented pliron. Do not enable it yourself.
+engine = ["dep:linkme"]
+
+[dev-dependencies]
+pliron.workspace = true
