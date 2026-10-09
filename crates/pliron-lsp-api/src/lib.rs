@@ -411,12 +411,15 @@ macro_rules! hover {
                     let f: fn(
                         &::pliron::context::Context,
                         ::pliron::context::Ptr<::pliron::operation::Operation>,
-                    ) -> ::core::option::Option<::pliron::alloc::string::String> = $f;
+                    )
+                        -> ::core::option::Option<::pliron::alloc::string::String> = $f;
                     match (
                         ctx.downcast_ref::<::pliron::context::Context>(),
                         op.downcast_ref::<::pliron::context::Ptr<::pliron::operation::Operation>>(),
                     ) {
-                        (::core::option::Option::Some(ctx), ::core::option::Option::Some(op)) => f(ctx, *op),
+                        (::core::option::Option::Some(ctx), ::core::option::Option::Some(op)) => {
+                            f(ctx, *op)
+                        }
                         _ => ::core::option::Option::None,
                     }
                 },
@@ -483,7 +486,10 @@ pub mod __private {
             }
             i += 1;
         }
-        assert!(dot, "pliron_lsp_api::hints!: names look like `dialect.name`");
+        assert!(
+            dot,
+            "pliron_lsp_api::hints!: names look like `dialect.name`"
+        );
     }
 
     /// The keys accepted by [`hints!`](crate::hints) (an unknown key fails

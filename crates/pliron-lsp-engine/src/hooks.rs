@@ -57,7 +57,11 @@ mod imp {
                     op: id,
                     target: HookTarget::OpName,
                     severity: HookSeverity::Warning,
-                    message: format!("lint `{}` panicked: {}", h.name, crate::panic_message(&*payload)),
+                    message: format!(
+                        "lint `{}` panicked: {}",
+                        h.name,
+                        crate::panic_message(&*payload)
+                    ),
                     source: h.name.to_string(),
                 });
             }
@@ -68,14 +72,16 @@ mod imp {
         HOVERS
             .iter()
             .filter_map(|h| {
-                catch_unwind(AssertUnwindSafe(|| (h.run)(ctx as &dyn Any, &op as &dyn Any)))
-                    .unwrap_or_else(|payload| {
-                        Some(format!(
-                            "*hover hook `{}` panicked: {}*",
-                            h.name,
-                            crate::panic_message(&*payload)
-                        ))
-                    })
+                catch_unwind(AssertUnwindSafe(|| {
+                    (h.run)(ctx as &dyn Any, &op as &dyn Any)
+                }))
+                .unwrap_or_else(|payload| {
+                    Some(format!(
+                        "*hover hook `{}` panicked: {}*",
+                        h.name,
+                        crate::panic_message(&*payload)
+                    ))
+                })
             })
             .collect()
     }

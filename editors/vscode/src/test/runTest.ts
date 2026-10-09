@@ -23,7 +23,10 @@ async function main() {
   fs.cpSync(path.join(extensionDevelopmentPath, "test-fixtures"), ws, { recursive: true });
   const server =
     process.env.PLIRON_LSP_SERVER ??
-    path.resolve(extensionDevelopmentPath, "../../target/debug/pliron-lsp");
+    path.resolve(
+      extensionDevelopmentPath,
+      "../../target/debug/pliron-lsp" + (process.platform === "win32" ? ".exe" : "")
+    );
   // With PLIRON_TEST_BUNDLED=1 no server path is configured, so the
   // extension must use the binaries bundled in `server/` (cargo xtask dist).
   if (!process.env.PLIRON_TEST_BUNDLED) {

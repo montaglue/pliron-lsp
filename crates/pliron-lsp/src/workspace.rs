@@ -122,13 +122,18 @@ pub fn file_symbols(doc: &Document) -> FileSymbols {
 /// All `.pliron` / `.plir` files under `roots`.
 pub fn find_ir_files(roots: &[PathBuf]) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             let name = e.file_name();
             let name = name.to_string_lossy();
             if p.is_dir() {
-                if depth < 12 && !name.starts_with('.') && !matches!(&*name, "target" | "node_modules") {
+                if depth < 12
+                    && !name.starts_with('.')
+                    && !matches!(&*name, "target" | "node_modules")
+                {
                     walk(&p, out, depth + 1);
                 }
             } else if p.extension().is_some_and(|x| x == "pliron" || x == "plir") {
@@ -169,7 +174,11 @@ fn fuzzy(name: &str, query: &str) -> bool {
 }
 
 #[allow(deprecated)]
-pub fn workspace_symbols(files: &[IndexedFile], query: &str, enc: Encoding) -> Vec<SymbolInformation> {
+pub fn workspace_symbols(
+    files: &[IndexedFile],
+    query: &str,
+    enc: Encoding,
+) -> Vec<SymbolInformation> {
     let mut out = Vec::new();
     for f in files {
         for d in &f.symbols.defs {
@@ -191,10 +200,20 @@ pub fn workspace_symbols(files: &[IndexedFile], query: &str, enc: Encoding) -> V
 }
 
 /// Definitions of `@name` (current file first).
-pub fn definitions<'a>(files: &'a [IndexedFile], name: &str, current: &Url) -> Vec<(&'a IndexedFile<'a>, &'a SymDef)> {
+pub fn definitions<'a>(
+    files: &'a [IndexedFile],
+    name: &str,
+    current: &Url,
+) -> Vec<(&'a IndexedFile<'a>, &'a SymDef)> {
     let mut out: Vec<_> = files
         .iter()
-        .flat_map(|f| f.symbols.defs.iter().filter(|d| d.name == name).map(move |d| (f, d)))
+        .flat_map(|f| {
+            f.symbols
+                .defs
+                .iter()
+                .filter(|d| d.name == name)
+                .map(move |d| (f, d))
+        })
         .collect();
     out.sort_by_key(|(f, _)| f.uri != current);
     out
@@ -222,7 +241,11 @@ fn file_name(f: &IndexedFile) -> String {
 /// `current` or, failing that, in the only file that defines the name;
 /// other files that define their own `@name` are left alone. Without a
 /// definition anywhere, all references count (an external symbol).
-pub fn symbol_occurrences(files: &[IndexedFile], name: &str, current: &Url) -> Result<Vec<Occurrence>, String> {
+pub fn symbol_occurrences(
+    files: &[IndexedFile],
+    name: &str,
+    current: &Url,
+) -> Result<Vec<Occurrence>, String> {
     let definers: Vec<usize> = (0..files.len())
         .filter(|i| files[*i].symbols.defs.iter().any(|d| d.name == name))
         .collect();
@@ -247,24 +270,40 @@ pub fn symbol_occurrences(files: &[IndexedFile], name: &str, current: &Url) -> R
             continue;
         }
         if Some(i) == home {
-            out.extend(f.symbols.defs.iter().filter(|d| d.name == name).map(|d| Occurrence {
-                file: i,
-                range: d.range,
-                is_def: true,
-            }));
+            out.extend(
+                f.symbols
+                    .defs
+                    .iter()
+                    .filter(|d| d.name == name)
+                    .map(|d| Occurrence {
+                        file: i,
+                        range: d.range,
+                        is_def: true,
+                    }),
+            );
         }
-        out.extend(f.symbols.uses.iter().filter(|u| u.name == name).map(|u| Occurrence {
-            file: i,
-            range: u.range,
-            is_def: false,
-        }));
+        out.extend(
+            f.symbols
+                .uses
+                .iter()
+                .filter(|u| u.name == name)
+                .map(|u| Occurrence {
+                    file: i,
+                    range: u.range,
+                    is_def: false,
+                }),
+        );
     }
     Ok(out)
 }
 
 /// Why `occurrences` cannot be renamed to `@new`: a file they are in
 /// already defines it.
-pub fn rename_conflict(files: &[IndexedFile], occurrences: &[Occurrence], new: &str) -> Option<String> {
+pub fn rename_conflict(
+    files: &[IndexedFile],
+    occurrences: &[Occurrence],
+    new: &str,
+) -> Option<String> {
     let mut touched: Vec<usize> = occurrences.iter().map(|o| o.file).collect();
     touched.dedup();
     touched
@@ -327,7 +366,11 @@ pub fn item(f: &IndexedFile, d: &SymDef, enc: Encoding) -> CallHierarchyItem {
 
 /// Who references `@name`, grouped by the symbol op containing the
 /// reference.
-pub fn incoming_calls(files: &[IndexedFile], name: &str, enc: Encoding) -> Vec<CallHierarchyIncomingCall> {
+pub fn incoming_calls(
+    files: &[IndexedFile],
+    name: &str,
+    enc: Encoding,
+) -> Vec<CallHierarchyIncomingCall> {
     let mut out: Vec<CallHierarchyIncomingCall> = Vec::new();
     for f in files {
         for u in f.symbols.uses.iter().filter(|u| u.name == name) {
@@ -421,8 +464,18 @@ mod tests {
         assert_eq!(inc.len(), 1);
         assert_eq!(inc[0].from.name, "@a");
         assert_eq!(inc[0].from_ranges.len(), 2);
-        let a = files[0].symbols.defs.iter().find(|d| d.name == "a").unwrap();
-        let out = outgoing_calls(&files, &uri, doc.range(a.range, Encoding::Utf16).start, Encoding::Utf16);
+        let a = files[0]
+            .symbols
+            .defs
+            .iter()
+            .find(|d| d.name == "a")
+            .unwrap();
+        let out = outgoing_calls(
+            &files,
+            &uri,
+            doc.range(a.range, Encoding::Utf16).start,
+            Encoding::Utf16,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to.name, "@b");
         let syms = workspace_symbols(&files, "", Encoding::Utf16);
@@ -436,12 +489,22 @@ mod tests {
         let a = "builtin.module @a {\n^e():\n  t.func @f {\n  ^b():\n    t.call @g\n  }\n}\n";
         let b = "builtin.module @b {\n^e():\n  t.func @g {\n  ^b():\n    t.call @f;\n    t.call @f\n  }\n}\n";
         let c = "builtin.module @c {\n^e():\n  t.func @f {\n  ^b():\n    t.call @f\n  }\n}\n";
-        let docs: Vec<Document> = [a, b, c].iter().map(|t| Document::new(t.to_string(), 0, &Default::default())).collect();
-        let uris: Vec<Url> = ["a", "b", "c"].iter().map(|n| Url::parse(&format!("file:///w/{n}.pliron")).unwrap()).collect();
+        let docs: Vec<Document> = [a, b, c]
+            .iter()
+            .map(|t| Document::new(t.to_string(), 0, &Default::default()))
+            .collect();
+        let uris: Vec<Url> = ["a", "b", "c"]
+            .iter()
+            .map(|n| Url::parse(&format!("file:///w/{n}.pliron")).unwrap())
+            .collect();
         let files: Vec<IndexedFile> = docs
             .iter()
             .zip(&uris)
-            .map(|(doc, uri)| IndexedFile { uri, doc, symbols: file_symbols(doc) })
+            .map(|(doc, uri)| IndexedFile {
+                uri,
+                doc,
+                symbols: file_symbols(doc),
+            })
             .collect();
 
         // From a.pliron, @f is a's: its definition and b's two calls.
@@ -450,11 +513,25 @@ mod tests {
         assert_eq!(per_file, [(0, true), (1, false), (1, false)]);
         // From b.pliron, @f is ambiguous (a and c define it).
         let err = symbol_occurrences(&files, "f", &uris[1]).unwrap_err();
-        assert!(err.contains("a.pliron") && err.contains("c.pliron"), "{err}");
+        assert!(
+            err.contains("a.pliron") && err.contains("c.pliron"),
+            "{err}"
+        );
         // From c.pliron, @f is c's own.
-        assert_eq!(symbol_occurrences(&files, "f", &uris[2]).unwrap().iter().filter(|o| o.file == 2).count(), 2);
+        assert_eq!(
+            symbol_occurrences(&files, "f", &uris[2])
+                .unwrap()
+                .iter()
+                .filter(|o| o.file == 2)
+                .count(),
+            2
+        );
         // Renaming a's @f to @g clashes in b.pliron; to @h it does not.
-        assert!(rename_conflict(&files, &occ, "g").unwrap().contains("b.pliron"));
+        assert!(
+            rename_conflict(&files, &occ, "g")
+                .unwrap()
+                .contains("b.pliron")
+        );
         assert!(rename_conflict(&files, &occ, "h").is_none());
 
         // Lenses: @f in a.pliron has 2 references; the module has none.
@@ -462,6 +539,9 @@ mod tests {
         assert_eq!(lenses.len(), 1);
         let cmd = lenses[0].command.as_ref().unwrap();
         assert_eq!(cmd.title, "2 references");
-        assert_eq!(cmd.arguments.as_ref().unwrap()[2].as_array().unwrap().len(), 2);
+        assert_eq!(
+            cmd.arguments.as_ref().unwrap()[2].as_array().unwrap().len(),
+            2
+        );
     }
 }

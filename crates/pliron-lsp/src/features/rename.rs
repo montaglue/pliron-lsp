@@ -12,7 +12,12 @@ use crate::exact::Range;
 
 /// The ranges to replace to rename the value or block `e` to `new`, or why
 /// it cannot be renamed.
-pub fn local_rename(doc: &Document, e: &Entity, new: &str, enc: Encoding) -> Result<Vec<Range>, String> {
+pub fn local_rename(
+    doc: &Document,
+    e: &Entity,
+    new: &str,
+    enc: Encoding,
+) -> Result<Vec<Range>, String> {
     if e.name != new
         && let Some(other) = conflict(doc, e, new)
     {
@@ -51,7 +56,8 @@ mod tests {
     use super::*;
     use crate::features::entity::entity_at;
 
-    const SRC: &str = "builtin.module @m {\n^e():\n  t.f @a {\n  ^b(x: i):\n    y = t.c;\n    t.r x, y\n  }\n}\n";
+    const SRC: &str =
+        "builtin.module @m {\n^e():\n  t.f @a {\n  ^b(x: i):\n    y = t.c;\n    t.r x, y\n  }\n}\n";
 
     fn at(needle: &str) -> u32 {
         SRC.find(needle).unwrap() as u32

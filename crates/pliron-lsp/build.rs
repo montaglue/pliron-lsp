@@ -27,7 +27,11 @@ fn main() {
     let crates = manifest.parent().unwrap();
     let repo = crates.parent().unwrap();
     let sources: [(&str, PathBuf, &[&str]); 2] = [
-        ("pliron-lsp-protocol", crates.join("pliron-lsp-protocol"), &[]),
+        (
+            "pliron-lsp-protocol",
+            crates.join("pliron-lsp-protocol"),
+            &[],
+        ),
         ("pliron-lsp-engine", crates.join("pliron-lsp-engine"), &[]),
     ];
     let mut files = Vec::new();
@@ -49,7 +53,10 @@ fn main() {
         for e in entries.flatten() {
             let p = e.path();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
-            if let Some(v) = name.strip_prefix("pliron-").and_then(|n| n.strip_suffix(".patch")) {
+            if let Some(v) = name
+                .strip_prefix("pliron-")
+                .and_then(|n| n.strip_suffix(".patch"))
+            {
                 patches.push((v.to_string(), p.clone()));
                 files.push((format!("patches/{name}"), p));
             }
@@ -64,12 +71,22 @@ fn main() {
             hash ^= *b as u64;
             hash = hash.wrapping_mul(0x100000001b3);
         }
-        writeln!(code, "    ({rel:?}, include_str!({:?})),", path.display().to_string()).unwrap();
+        writeln!(
+            code,
+            "    ({rel:?}, include_str!({:?})),",
+            path.display().to_string()
+        )
+        .unwrap();
     }
     code.push_str("];\n");
     code.push_str("/// (pliron version line, patch)\npub static PATCHES: &[(&str, &str)] = &[\n");
     for (v, p) in &patches {
-        writeln!(code, "    ({v:?}, include_str!({:?})),", p.display().to_string()).unwrap();
+        writeln!(
+            code,
+            "    ({v:?}, include_str!({:?})),",
+            p.display().to_string()
+        )
+        .unwrap();
     }
     code.push_str("];\n");
     writeln!(code, "pub const SRC_HASH: &str = \"{hash:016x}\";").unwrap();

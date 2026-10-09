@@ -104,9 +104,14 @@ pub struct OutlinedSection {
 pub enum ErrorKind {
     Generic,
     /// A `;` is missing; inserting one at `insert_at` fixes it.
-    MissingSemicolon { insert_at: Offset },
+    MissingSemicolon {
+        insert_at: Offset,
+    },
     /// A bracket is never closed; inserting `closer` at `insert_at` fixes it.
-    Unclosed { closer: char, insert_at: Offset },
+    Unclosed {
+        closer: char,
+        insert_at: Offset,
+    },
     /// A `;` after the last operation of a block (rejected by pliron 0.18).
     TrailingSemicolon,
     /// Text that pliron ignores.
@@ -547,7 +552,12 @@ impl Parser<'_> {
                         }
                         stack.pop();
                     } else if c != '>' {
-                        self.error(tok.start, tok.end, format!("unmatched `{c}`"), ErrorKind::Generic);
+                        self.error(
+                            tok.start,
+                            tok.end,
+                            format!("unmatched `{c}`"),
+                            ErrorKind::Generic,
+                        );
                     }
                     body_depth.push(stack.len() as u16);
                     body.push(self.pos as TokIdx);
@@ -679,7 +689,10 @@ impl Parser<'_> {
                         self.pos += 1;
                         ty = self.type_tokens_until(&[',', ')']);
                     } else {
-                        self.error_at_tok(self.pos, "expected `:` and a type after block argument name");
+                        self.error_at_tok(
+                            self.pos,
+                            "expected `:` and a type after block argument name",
+                        );
                     }
                     args.push(BlockArg { name, ty });
                     if self.is_punct_at(self.pos, ',') {
@@ -791,10 +804,7 @@ impl Parser<'_> {
     fn block_body(&mut self, block: BlockId) -> Vec<StmtId> {
         let mut stmts = Vec::new();
         loop {
-            if self.at_end()
-                || self.is_punct_at(self.pos, '}')
-                || self.is_block_header(self.pos)
-            {
+            if self.at_end() || self.is_punct_at(self.pos, '}') || self.is_block_header(self.pos) {
                 break;
             }
             if self.is_loose_stmt_start(self.pos) {
@@ -960,7 +970,10 @@ mod tests {
         assert!(tree.errors.is_empty(), "{:?}", tree.errors);
         assert_eq!(tree.top.len(), 1);
         let module = tree.stmt(tree.top[0]);
-        assert_eq!(tree.tok(module.op_name.unwrap()).text(DEMO), "builtin.module");
+        assert_eq!(
+            tree.tok(module.op_name.unwrap()).text(DEMO),
+            "builtin.module"
+        );
         assert_eq!(module.regions.len(), 1);
         let mregion = tree.region(module.regions[0]);
         assert_eq!(mregion.blocks.len(), 1);
@@ -972,9 +985,19 @@ mod tests {
         let fregion = tree.region(func.regions[0]);
         assert_eq!(fregion.blocks.len(), 3);
         let entry = tree.block(fregion.blocks[0]);
-        assert_eq!(names(&tree, DEMO, &entry.args.iter().map(|a| a.name).collect::<Vec<_>>()), ["x"]);
+        assert_eq!(
+            names(
+                &tree,
+                DEMO,
+                &entry.args.iter().map(|a| a.name).collect::<Vec<_>>()
+            ),
+            ["x"]
+        );
         let (s, e) = entry.args[0].ty.unwrap();
-        assert_eq!(&DEMO[tree.tok(s).start as usize..tree.tok(e).end as usize], "builtin.integer i64");
+        assert_eq!(
+            &DEMO[tree.tok(s).start as usize..tree.tok(e).end as usize],
+            "builtin.integer i64"
+        );
         assert_eq!(entry.stmts.len(), 2);
         let c = tree.stmt(entry.stmts[0]);
         assert_eq!(names(&tree, DEMO, &c.results), ["y"]);
@@ -990,7 +1013,10 @@ mod tests {
         let src = "builtin.module @m {\n^e():\n  a = t.c 1\n  b = t.c 2;\n  t.r b\n}\n";
         let tree = parse(src);
         assert_eq!(tree.errors.len(), 1, "{:?}", tree.errors);
-        assert!(matches!(tree.errors[0].kind, ErrorKind::MissingSemicolon { .. }));
+        assert!(matches!(
+            tree.errors[0].kind,
+            ErrorKind::MissingSemicolon { .. }
+        ));
         let block = tree.block(tree.region(tree.stmt(tree.top[0]).regions[0]).blocks[0]);
         assert_eq!(block.stmts.len(), 3);
     }
@@ -1025,7 +1051,10 @@ mod tests {
         assert_eq!(o.entries.len(), 2);
         assert_eq!(o.entries[0].index, 0);
         let (s, e) = o.entries[1].loc.unwrap();
-        assert_eq!(&src[s as usize..e as usize], "@[<in-memory>: line: 8, column: 9],");
+        assert_eq!(
+            &src[s as usize..e as usize],
+            "@[<in-memory>: line: 8, column: 9],"
+        );
         let block = tree.block(tree.region(tree.stmt(tree.top[0]).regions[0]).blocks[0]);
         assert!(block.outline_ref.is_some());
     }
@@ -1042,8 +1071,22 @@ mod tests {
     #[test]
     fn garbage_never_panics() {
         for src in [
-            "", "}", "{", "^", "^a(", "^a(x:", "x =", "x = y", "a.b {", "a.b { ^c(", "outlined_attributes:",
-            "a.b\noutlined_attributes:\n!0 = @[", "x, = a.b", "a.b (((((", "a.b )))", "a.b { ^c(): d.e { ^f(): } }",
+            "",
+            "}",
+            "{",
+            "^",
+            "^a(",
+            "^a(x:",
+            "x =",
+            "x = y",
+            "a.b {",
+            "a.b { ^c(",
+            "outlined_attributes:",
+            "a.b\noutlined_attributes:\n!0 = @[",
+            "x, = a.b",
+            "a.b (((((",
+            "a.b )))",
+            "a.b { ^c(): d.e { ^f(): } }",
         ] {
             let _ = parse(src);
         }

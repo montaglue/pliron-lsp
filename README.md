@@ -171,7 +171,7 @@ macro.
 ## Requirements and limitations
 
 **Supported projects**
-- Project engines are built for pliron **0.16, 0.17 and 0.18**, from crates.io
+- Project engines are built for pliron **0.16, 0.17, 0.18 and 0.19**, from crates.io
   or from a git dependency: the project's own pliron source is instrumented
   with the matching patch from [third_party/patches](third_party/patches).
   pliron as a local `path` dependency is not supported (cargo cannot
@@ -204,9 +204,9 @@ crates/pliron-ir-syntax     dialect-agnostic syntax layer
 crates/pliron-lsp-engine    engine library (parse/verify/model with instrumented pliron)
 crates/pliron-lsp-engine-ref  reference engine binary
 crates/pliron-lsp-protocol  frontend <-> engine wire protocol
-third_party/                instrumented pliron 0.18.0 + pliron-derive 0.18.0
+third_party/                instrumentation patches (pliron 0.16-0.19) + instrumented pliron 0.18.0
 editors/vscode              VS Code extension (bundles the server; `npm test` runs it in VS Code)
-xtask/                      `cargo xtask dist` / `cargo xtask install`
+xtask/                      `cargo xtask dist` / `install` / `check-pliron`
 spike/                      MIR-interpreter feasibility study (rejected; see its README)
 ```
 
@@ -219,3 +219,17 @@ VS Code):
 - an automatic-bundle test on a toy dialect workspace
   (`crates/pliron-lsp/tests/fixtures/toy`), which builds the bundle, edits
   the dialect, and checks the hot reload.
+
+**CI** (`.github/workflows/`):
+- `ci.yml`, on every push to `main` and pull request: rustfmt, clippy and the
+  extension's type check; the Rust tests and the VS Code integration tests
+  (Linux only).
+- `pliron-compat.yml`: `cargo xtask check-pliron` daily against the newest
+  pliron release and the head of pliron's repository, so that a pliron
+  change needing a new patch shows up early; weekly (and when the patches
+  change) against every supported version line.
+- `release.yml`, for a `v*` tag or on demand: extension packages for
+  `linux-x64`, `linux-arm64`, `darwin-arm64`, `darwin-x64`, `win32-x64` and
+  `win32-arm64` (the arm64 Linux/Windows and x64 macOS ones cross-compiled);
+  only the `linux-x64` one is tested as packaged. A tag also publishes a
+  GitHub release with them.

@@ -23,11 +23,18 @@ use crate::document::Document;
 use crate::index::{DialectIndex, Entry, EntryKind};
 
 /// The op / type / attribute name under the cursor: (name, kind, range).
-pub fn dialect_name_at(doc: &Document, off: Offset) -> Option<(String, Option<EntryKind>, (Offset, Offset))> {
+pub fn dialect_name_at(
+    doc: &Document,
+    off: Offset,
+) -> Option<(String, Option<EntryKind>, (Offset, Offset))> {
     if let Some(x) = doc.fresh_exact() {
         if let Some(op) = x.op_name_at(off) {
             let (_, name) = x.op_span[&op];
-            return Some((x.model.ops[op as usize].opid.clone(), Some(EntryKind::Op), name));
+            return Some((
+                x.model.ops[op as usize].opid.clone(),
+                Some(EntryKind::Op),
+                name,
+            ));
         }
         for s in x.spans_at(off) {
             let (name_end, kind) = match s.kind {
@@ -35,9 +42,15 @@ pub fn dialect_name_at(doc: &Document, off: Offset) -> Option<(String, Option<En
                 SpanKind::Attr { name_end } => (name_end, EntryKind::Attr),
                 _ => continue,
             };
-            let ne = doc.line_index.offset_of_pliron(name_end.line, name_end.column, &doc.text);
+            let ne = doc
+                .line_index
+                .offset_of_pliron(name_end.line, name_end.column, &doc.text);
             if s.start <= off && off <= ne {
-                return Some((doc.slice((s.start, ne)).to_string(), Some(kind), (s.start, ne)));
+                return Some((
+                    doc.slice((s.start, ne)).to_string(),
+                    Some(kind),
+                    (s.start, ne),
+                ));
             }
         }
     }
@@ -77,7 +90,10 @@ pub fn signature_help(
     }
     let name = name_tok.text(&doc.text);
     let entry = index?.lookup(name, Some(EntryKind::Op))?;
-    let pieces = crate::format::render(&crate::format::parse(entry.format.as_ref()?), &entry.operands);
+    let pieces = crate::format::render(
+        &crate::format::parse(entry.format.as_ref()?),
+        &entry.operands,
+    );
     let mut label = format!("{name} ");
     let mut params = Vec::new();
     for p in &pieces {
@@ -126,7 +142,11 @@ pub fn entry_docs(e: &Entry) -> String {
     let uri = lsp_types::Url::from_file_path(&e.file)
         .map(|u| format!("{u}#L{}", e.line + 1))
         .unwrap_or_default();
-    let file = e.file.file_name().and_then(|f| f.to_str()).unwrap_or("source");
+    let file = e
+        .file
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("source");
     s.push_str(&format!(
         "*{} `{}` — defined by Rust type [`{}`]({uri}) in `{file}:{}`*",
         e.kind.describe(),
@@ -148,7 +168,11 @@ pub fn phase_name(phase: DiagPhase) -> &'static str {
 
 /// Diagnostics for a document. Returns `None` when nothing should be
 /// published yet (an engine analysis of the current text is pending).
-pub fn diagnostics(doc: &Document, enc: Encoding, engine_expected: bool) -> Option<Vec<Diagnostic>> {
+pub fn diagnostics(
+    doc: &Document,
+    enc: Encoding,
+    engine_expected: bool,
+) -> Option<Vec<Diagnostic>> {
     if let Some(x) = doc.fresh_exact() {
         return Some(
             x.diagnostics
@@ -273,7 +297,9 @@ pub fn completion(
         for (i, d) in a.defs.iter().enumerate() {
             let s = match d.kind {
                 DefKind::Result => d.stmt.map(|s| a.stmt_scope[s.0 as usize]),
-                DefKind::BlockArg => d.block.map(|b| a.region_scope[a.tree.block(b).region.0 as usize]),
+                DefKind::BlockArg => d
+                    .block
+                    .map(|b| a.region_scope[a.tree.block(b).region.0 as usize]),
                 _ => None,
             };
             if s != Some(scope) {
@@ -285,8 +311,13 @@ pub fn completion(
             }
             let ty = doc
                 .fresh_exact()
-                .and_then(|x| x.value_at(tok.start).map(|v| x.model.values[v as usize].ty.clone()))
-                .or_else(|| d.ty.map(|t| doc.text[t.start as usize..t.end as usize].to_string()));
+                .and_then(|x| {
+                    x.value_at(tok.start)
+                        .map(|v| x.model.values[v as usize].ty.clone())
+                })
+                .or_else(|| {
+                    d.ty.map(|t| doc.text[t.start as usize..t.end as usize].to_string())
+                });
             let _ = i;
             items.push(CompletionItem {
                 label: d.name.clone(),
@@ -318,9 +349,12 @@ pub fn completion(
             .and_then(|e| e.format.as_ref().map(|f| (e, f)))
             .map(|(e, f)| crate::format::render(&crate::format::parse(f), &e.operands));
         // A snippet from the dialect's `hints!` wins over the derived one.
-        let snippet = entry
-            .and_then(|e| e.snippet.clone())
-            .or_else(|| pieces.as_ref().filter(|p| !p.is_empty()).map(|p| crate::format::snippet(p)));
+        let snippet = entry.and_then(|e| e.snippet.clone()).or_else(|| {
+            pieces
+                .as_ref()
+                .filter(|p| !p.is_empty())
+                .map(|p| crate::format::snippet(p))
+        });
         let (text_edit, format) = match (snippet, snippets) {
             (Some(s), true) => (
                 Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
@@ -334,10 +368,12 @@ pub fn completion(
         items.push(CompletionItem {
             label: op.clone(),
             kind: Some(CompletionItemKind::FUNCTION),
-            label_details: pieces.as_ref().map(|p| lsp_types::CompletionItemLabelDetails {
-                detail: Some(format!(" {}", crate::format::display(p))),
-                description: None,
-            }),
+            label_details: pieces
+                .as_ref()
+                .map(|p| lsp_types::CompletionItemLabelDetails {
+                    detail: Some(format!(" {}", crate::format::display(p))),
+                    description: None,
+                }),
             text_edit,
             insert_text_format: format,
             filter_text: Some(op),

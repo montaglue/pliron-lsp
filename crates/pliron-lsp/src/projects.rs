@@ -30,10 +30,20 @@ pub enum Outcome {
 
 #[derive(Debug)]
 pub enum JobEvent {
-    Progress { root: PathBuf, message: String },
+    Progress {
+        root: PathBuf,
+        message: String,
+    },
     /// The project's dialect sources were indexed (before building).
-    Index { root: PathBuf, index: DialectIndex, dirs: Vec<PathBuf> },
-    Done { root: PathBuf, outcome: Outcome },
+    Index {
+        root: PathBuf,
+        index: DialectIndex,
+        dirs: Vec<PathBuf>,
+    },
+    Done {
+        root: PathBuf,
+        outcome: Outcome,
+    },
 }
 
 /// Source directories to index for a selection: the dialect crates plus
@@ -62,7 +72,11 @@ pub fn spawn_reference_index(tx: Sender<JobEvent>) {
             for reg in regs.flatten() {
                 for krate in ["pliron-0.18.0", "pliron-llvm-0.18.0"] {
                     let d = reg.path().join(krate).join("src");
-                    if d.is_dir() && !dirs.iter().any(|x: &PathBuf| x.ends_with(Path::new(krate).join("src"))) {
+                    if d.is_dir()
+                        && !dirs
+                            .iter()
+                            .any(|x: &PathBuf| x.ends_with(Path::new(krate).join("src")))
+                    {
                         dirs.push(d);
                     }
                 }

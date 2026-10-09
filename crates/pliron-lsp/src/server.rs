@@ -194,7 +194,13 @@ pub fn capabilities(enc: Encoding) -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         signature_help_provider: Some(SignatureHelpOptions {
-            trigger_characters: Some(vec![" ".into(), ",".into(), "(".into(), "<".into(), ":".into()]),
+            trigger_characters: Some(vec![
+                " ".into(),
+                ",".into(),
+                "(".into(),
+                "<".into(),
+                ":".into(),
+            ]),
             retrigger_characters: None,
             work_done_progress_options: Default::default(),
         }),
@@ -349,7 +355,11 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
             .unwrap_or(false),
     };
     if server.reference_exe.is_none() && !server.opts.disable_engine {
-        server.status(None, "syntax-only", Some("reference engine not found".into()));
+        server.status(
+            None,
+            "syntax-only",
+            Some("reference engine not found".into()),
+        );
     }
     server.main_loop(&connection)?;
     for e in server.engines.values_mut() {
@@ -490,7 +500,7 @@ impl Server {
         let Some(root) = root else {
             return Route::Reference;
         };
-        let root = root.canonicalize().unwrap_or(root);
+        let root = crate::canonicalize(&root).unwrap_or(root);
         if !self.projects.contains_key(&root) {
             self.projects.insert(root.clone(), Project::new());
             self.status(
@@ -603,7 +613,12 @@ impl Server {
             let exe = self.reference_exe.clone()?;
             self.engines.insert(
                 REFERENCE.into(),
-                Engine::new(exe, REFERENCE.into(), "reference".into(), self.engine_tx.clone()),
+                Engine::new(
+                    exe,
+                    REFERENCE.into(),
+                    "reference".into(),
+                    self.engine_tx.clone(),
+                ),
             );
         }
         self.engines.get_mut(key)
@@ -616,7 +631,9 @@ impl Server {
             Route::Reference => None,
             Route::Project(root) => match &self.projects.get(root)?.state {
                 ProjectState::Building => None,
-                ProjectState::Unsupported(r) => Some(format!("pliron-lsp: {r}; syntax features only")),
+                ProjectState::Unsupported(r) => {
+                    Some(format!("pliron-lsp: {r}; syntax features only"))
+                }
                 ProjectState::Failed(e) => Some(format!("pliron-lsp: {e}")),
                 _ => None,
             },
@@ -742,7 +759,11 @@ impl Server {
     fn on_finished(&mut self, f: Finished) {
         match f {
             Finished::Hello(info) => {
-                let state = if info.context_error.is_some() { "error" } else { "ready" };
+                let state = if info.context_error.is_some() {
+                    "error"
+                } else {
+                    "ready"
+                };
                 self.status(
                     Some(info.bundle_id.clone()),
                     state,
@@ -761,7 +782,9 @@ impl Server {
                 );
             }
             Finished::Analysis { uri, result } => {
-                let Some(doc) = self.docs.get_mut(&uri) else { return };
+                let Some(doc) = self.docs.get_mut(&uri) else {
+                    return;
+                };
                 if result.text_hash != doc.hash {
                     return; // stale; a newer analysis is queued
                 }
@@ -814,14 +837,16 @@ impl Server {
             JobEvent::Index { root, index, dirs } => {
                 let dirs = dirs
                     .into_iter()
-                    .map(|d| d.canonicalize().unwrap_or(d))
+                    .map(|d| crate::canonicalize(&d).unwrap_or(d))
                     .collect();
                 self.indexes.insert(root, (Arc::new(index), dirs));
                 self.refresh_knowledge();
             }
             JobEvent::Done { root, outcome } => {
                 let key = root.display().to_string();
-                let Some(p) = self.projects.get_mut(&root) else { return };
+                let Some(p) = self.projects.get_mut(&root) else {
+                    return;
+                };
                 p.building = false;
                 p.last_build = p.build_started.take().map(|t| t.elapsed());
                 let (state, status_msg) = match outcome {
@@ -836,7 +861,7 @@ impl Server {
                         p.description = Some(description.clone());
                         p.watched = watched
                             .into_iter()
-                            .map(|w| w.canonicalize().unwrap_or(w))
+                            .map(|w| crate::canonicalize(&w).unwrap_or(w))
                             .collect();
                         if let Some(mut old) = self.engines.remove(&key) {
                             old.shutdown();
@@ -853,7 +878,10 @@ impl Server {
                     }
                     Outcome::NoDialects => (
                         ProjectState::NoDialects,
-                        ("ready", "no dialect crates: using the reference engine".into()),
+                        (
+                            "ready",
+                            "no dialect crates: using the reference engine".into(),
+                        ),
                     ),
                     Outcome::Unsupported(r) => (ProjectState::Unsupported(r.clone()), ("error", r)),
                     Outcome::Failed(e) => {
@@ -909,13 +937,19 @@ impl Server {
         if !self.watch_registration {
             return;
         }
-        let watchers = ["**/*.rs", "**/Cargo.toml", "**/Cargo.lock", "**/*.pliron", "**/*.plir"]
-            .into_iter()
-            .map(|g| FileSystemWatcher {
-                glob_pattern: GlobPattern::String(g.into()),
-                kind: None,
-            })
-            .collect();
+        let watchers = [
+            "**/*.rs",
+            "**/Cargo.toml",
+            "**/Cargo.lock",
+            "**/*.pliron",
+            "**/*.plir",
+        ]
+        .into_iter()
+        .map(|g| FileSystemWatcher {
+            glob_pattern: GlobPattern::String(g.into()),
+            kind: None,
+        })
+        .collect();
         let opts = DidChangeWatchedFilesRegistrationOptions { watchers };
         self.client_request::<RegisterCapability>(RegistrationParams {
             registrations: vec![Registration {
@@ -930,11 +964,12 @@ impl Server {
     fn on_file_changed(&mut self, path: &Path) {
         // Compare canonical paths (cargo reports canonical ones, editors may
         // not, e.g. /var vs /private/var on macOS).
-        let canonical = path
-            .canonicalize()
+        let canonical = crate::canonicalize(path)
             .or_else(|_| {
                 path.parent()
-                    .map(|d| d.canonicalize().map(|d| d.join(path.file_name().unwrap_or_default())))
+                    .map(|d| {
+                        crate::canonicalize(d).map(|d| d.join(path.file_name().unwrap_or_default()))
+                    })
                     .unwrap_or_else(|| Ok(path.to_path_buf()))
             })
             .unwrap_or_else(|_| path.to_path_buf());
@@ -1004,7 +1039,10 @@ impl Server {
                 if let Ok(p) = serde_json::from_value::<DidChangeWatchedFilesParams>(n.params) {
                     for change in p.changes {
                         if let Ok(path) = change.uri.to_file_path() {
-                            if path.extension().is_some_and(|x| x == "pliron" || x == "plir") {
+                            if path
+                                .extension()
+                                .is_some_and(|x| x == "pliron" || x == "plir")
+                            {
                                 match std::fs::read_to_string(&path) {
                                     Ok(text) if change.typ != FileChangeType::DELETED => {
                                         self.ws_files.insert(
@@ -1089,10 +1127,12 @@ impl Server {
                         line: l.line - 1,
                         character: l.column - 1,
                     };
-                    return Ok(serde_json::to_value(GotoDefinitionResponse::Scalar(Location {
-                        uri: target,
-                        range: lsp_types::Range { start: p, end: p },
-                    }))?);
+                    return Ok(serde_json::to_value(GotoDefinitionResponse::Scalar(
+                        Location {
+                            uri: target,
+                            range: lsp_types::Range { start: p, end: p },
+                        },
+                    ))?);
                 }
                 let doc = self.doc(&tdp.text_document.uri)?;
                 let mut loc = features::entity::entity_at(doc, off)
@@ -1109,14 +1149,15 @@ impl Server {
                     && e.kind == EntityKind::Symbol
                 {
                     let files = self.indexed_files();
-                    let defs: Vec<Location> = crate::workspace::definitions(&files, &e.name, &tdp.text_document.uri)
-                        .into_iter()
-                        .filter(|(f, _)| *f.uri != tdp.text_document.uri)
-                        .map(|(f, d)| Location {
-                            uri: f.uri.clone(),
-                            range: f.doc.range(d.range, enc),
-                        })
-                        .collect();
+                    let defs: Vec<Location> =
+                        crate::workspace::definitions(&files, &e.name, &tdp.text_document.uri)
+                            .into_iter()
+                            .filter(|(f, _)| *f.uri != tdp.text_document.uri)
+                            .map(|(f, d)| Location {
+                                uri: f.uri.clone(),
+                                range: f.doc.range(d.range, enc),
+                            })
+                            .collect();
                     if !defs.is_empty() {
                         return Ok(serde_json::to_value(GotoDefinitionResponse::Array(defs))?);
                     }
@@ -1149,8 +1190,12 @@ impl Server {
                     && e.kind == EntityKind::Symbol
                 {
                     let files = self.indexed_files();
-                    let occurrences = crate::workspace::symbol_occurrences(&files, &e.name, &tdp.text_document.uri)
-                        .map_err(|m| anyhow::anyhow!(m))?;
+                    let occurrences = crate::workspace::symbol_occurrences(
+                        &files,
+                        &e.name,
+                        &tdp.text_document.uri,
+                    )
+                    .map_err(|m| anyhow::anyhow!(m))?;
                     let locs: Vec<Location> = occurrences
                         .iter()
                         .filter(|o| p.context.include_declaration || !o.is_def)
@@ -1230,10 +1275,7 @@ impl Server {
                 let Some(e) = features::entity::entity_at(doc, off) else {
                     anyhow::bail!("nothing to rename here");
                 };
-                let new = p
-                    .new_name
-                    .trim_start_matches(['^', '@'])
-                    .to_string();
+                let new = p.new_name.trim_start_matches(['^', '@']).to_string();
                 if e.kind != EntityKind::Outline && !is_identifier(&new) {
                     anyhow::bail!("`{new}` is not a valid pliron identifier");
                 }
@@ -1241,10 +1283,15 @@ impl Server {
                 if e.kind == EntityKind::Symbol {
                     // Across the workspace's IR files.
                     let files = self.indexed_files();
-                    let occurrences = crate::workspace::symbol_occurrences(&files, &e.name, &tdp.text_document.uri)
-                        .map_err(|m| anyhow::anyhow!(m))?;
+                    let occurrences = crate::workspace::symbol_occurrences(
+                        &files,
+                        &e.name,
+                        &tdp.text_document.uri,
+                    )
+                    .map_err(|m| anyhow::anyhow!(m))?;
                     if e.name != new
-                        && let Some(m) = crate::workspace::rename_conflict(&files, &occurrences, &new)
+                        && let Some(m) =
+                            crate::workspace::rename_conflict(&files, &occurrences, &new)
                     {
                         anyhow::bail!(m);
                     }
@@ -1258,7 +1305,8 @@ impl Server {
                 } else {
                     let ranges = match e.kind {
                         EntityKind::Value | EntityKind::Block => {
-                            features::rename::local_rename(doc, &e, &new, enc).map_err(|m| anyhow::anyhow!(m))?
+                            features::rename::local_rename(doc, &e, &new, enc)
+                                .map_err(|m| anyhow::anyhow!(m))?
                         }
                         _ => e.occurrences(),
                     };
@@ -1280,7 +1328,11 @@ impl Server {
                 let p: lsp_types::CodeLensParams = serde_json::from_value(req.params)?;
                 self.doc(&p.text_document.uri)?;
                 let files = self.indexed_files();
-                serde_json::to_value(crate::workspace::reference_lenses(&files, &p.text_document.uri, enc))?
+                serde_json::to_value(crate::workspace::reference_lenses(
+                    &files,
+                    &p.text_document.uri,
+                    enc,
+                ))?
             }
             lsp_types::request::DocumentLinkRequest::METHOD => {
                 let p: lsp_types::DocumentLinkParams = serde_json::from_value(req.params)?;
@@ -1359,13 +1411,19 @@ impl Server {
                 let off = doc.offset(tdp.position, enc);
                 serde_json::to_value(features::signature_help(doc, off, index.as_deref()))?
             }
-            lsp_types::request::Formatting::METHOD | lsp_types::request::RangeFormatting::METHOD => {
-                let (uri, options, range) = if req.method == lsp_types::request::Formatting::METHOD {
+            lsp_types::request::Formatting::METHOD
+            | lsp_types::request::RangeFormatting::METHOD => {
+                let (uri, options, range) = if req.method == lsp_types::request::Formatting::METHOD
+                {
                     let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
                     (p.text_document.uri, p.options, None)
                 } else {
                     let p: DocumentRangeFormattingParams = serde_json::from_value(req.params)?;
-                    (p.text_document.uri, p.options, Some((p.range.start.line, p.range.end.line)))
+                    (
+                        p.text_document.uri,
+                        p.options,
+                        Some((p.range.start.line, p.range.end.line)),
+                    )
                 };
                 let doc = self.doc(&uri)?;
                 let unit = if options.insert_spaces {
@@ -1449,7 +1507,9 @@ impl Server {
                 });
                 Value::String(self.analyzer_status(p.text_document.map(|t| t.uri)))
             }
-            "pliron/viewEngineModel" | "pliron/viewSyntaxTree" | "pliron/dialectRegistry"
+            "pliron/viewEngineModel"
+            | "pliron/viewSyntaxTree"
+            | "pliron/dialectRegistry"
             | "pliron/bundleManifest" => {
                 let p: DocParams = serde_json::from_value(req.params)?;
                 let uri = p
@@ -1534,7 +1594,11 @@ impl Server {
                     None => "unknown".into(),
                 }
             );
-            let _ = writeln!(out, "- engine: {}", key.as_deref().unwrap_or("none (syntax layer only)"));
+            let _ = writeln!(
+                out,
+                "- engine: {}",
+                key.as_deref().unwrap_or("none (syntax layer only)")
+            );
             if let Some(doc) = self.docs.get(uri) {
                 let analysis = match (&doc.exact, doc.fresh_exact()) {
                     (_, Some(x)) => format!(
@@ -1569,7 +1633,11 @@ impl Server {
             };
             let _ = writeln!(out, "### `{}`\n\n- state: {state}", root.display());
             if p.building {
-                let _ = writeln!(out, "- build in progress: {}", p.message.as_deref().unwrap_or(""));
+                let _ = writeln!(
+                    out,
+                    "- build in progress: {}",
+                    p.message.as_deref().unwrap_or("")
+                );
             }
             if let Some(d) = &p.description {
                 let _ = writeln!(out, "- {d}");
@@ -1601,8 +1669,11 @@ impl Server {
                 if e.is_running() { "running" } else { "stopped" }
             );
             if let Some(i) = &e.info {
-                let crates: Vec<String> =
-                    i.crates.iter().map(|c| format!("{} {}", c.name, c.version)).collect();
+                let crates: Vec<String> = i
+                    .crates
+                    .iter()
+                    .map(|c| format!("{} {}", c.name, c.version))
+                    .collect();
                 let _ = writeln!(
                     out,
                     "  - {} registrations; crates: {}",
@@ -1623,8 +1694,11 @@ impl Server {
                 .unwrap_or_else(|| "not found".into())
         );
         let _ = writeln!(out, "\n## Dialect indexes\n");
-        let mut idx: Vec<(&PathBuf, usize)> =
-            self.indexes.iter().map(|(k, (i, _))| (k, i.len())).collect();
+        let mut idx: Vec<(&PathBuf, usize)> = self
+            .indexes
+            .iter()
+            .map(|(k, (i, _))| (k, i.len()))
+            .collect();
         idx.sort();
         for (k, n) in idx {
             let _ = writeln!(out, "- `{}`: {n} entries", k.display());

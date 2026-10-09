@@ -15,7 +15,11 @@ use pliron_lsp_protocol::ProbeParams;
 
 /// Parse `text` with `parser`, returning the error message on failure.
 /// (Works across pliron versions, unlike `parse_from_str`.)
-fn parse_err<'a, P: Parser<StateStream<'a>>>(ctx: &'a mut Context, text: &'a str, mut parser: P) -> Option<String> {
+fn parse_err<'a, P: Parser<StateStream<'a>>>(
+    ctx: &'a mut Context,
+    text: &'a str,
+    mut parser: P,
+) -> Option<String> {
     let stream = state_stream_from_iterator(text.chars(), State::new(ctx, Source::InMemory));
     parser.parse(stream).err().map(|e| e.to_string())
 }

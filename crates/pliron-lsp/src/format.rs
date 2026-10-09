@@ -158,12 +158,14 @@ pub fn parse(fmt: &str) -> Vec<Elem> {
                     let mut label = None;
                     let mut delimiters = None;
                     for extra in a.iter().skip(2) {
-                        if let Some(inner) =
-                            extra.strip_prefix("label(").and_then(|s| s.strip_suffix(')'))
+                        if let Some(inner) = extra
+                            .strip_prefix("label(")
+                            .and_then(|s| s.strip_suffix(')'))
                         {
                             label = var(inner).map(str::to_string).or_else(|| literal(inner));
-                        } else if let Some(inner) =
-                            extra.strip_prefix("delimiters(").and_then(|s| s.strip_suffix(')'))
+                        } else if let Some(inner) = extra
+                            .strip_prefix("delimiters(")
+                            .and_then(|s| s.strip_suffix(')'))
                         {
                             let d = split_args(inner);
                             if let (Some(o), Some(c)) = (
@@ -194,7 +196,10 @@ pub fn parse(fmt: &str) -> Vec<Elem> {
 /// Strip common dialect prefixes from attribute names for placeholders
 /// (`llvm_icmp_predicate` -> `predicate`).
 fn short_attr(name: &str) -> &str {
-    name.rsplit('_').next().filter(|s| !s.is_empty()).unwrap_or(name)
+    name.rsplit('_')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
 }
 
 /// One rendered piece of a format.
@@ -263,7 +268,9 @@ pub fn display(pieces: &[Piece]) -> String {
 }
 
 fn escape_snippet(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}")
+    s.replace('\\', "\\\\")
+        .replace('$', "\\$")
+        .replace('}', "\\}")
 }
 
 /// An LSP snippet for the rendered pieces (`${1:lhs}, ${2:rhs} : ${3:type}`).
@@ -314,13 +321,13 @@ mod tests {
     fn icmp_format() {
         let f = "$0 ` <` attr($llvm_icmp_predicate, $ICmpPredicateAttr) `> ` $1 ` : ` type($0)";
         let e = parse(f);
-        assert_eq!(
-            e[0..2],
-            [Elem::Operand(0), Elem::Lit(" <".into())]
-        );
+        assert_eq!(e[0..2], [Elem::Operand(0), Elem::Lit(" <".into())]);
         let p = render(&e, &["lhs".into(), "rhs".into()]);
         assert_eq!(display(&p), "lhs <predicate> rhs : type");
-        assert_eq!(snippet(&p), "${1:lhs} <${2:predicate}> ${3:rhs} : ${4:type}");
+        assert_eq!(
+            snippet(&p),
+            "${1:lhs} <${2:predicate}> ${3:rhs} : ${4:type}"
+        );
     }
 
     #[test]

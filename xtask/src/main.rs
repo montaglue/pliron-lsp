@@ -4,10 +4,16 @@
 //! * `cargo xtask dist [--no-build] [--target <vscode-target>]`
 //!   builds release binaries of the server and the reference engine, puts
 //!   them into `editors/vscode/server/` and packages a platform-specific
-//!   VS Code extension into `dist/pliron-<target>.vsix`.
+//!   VS Code extension into `dist/pliron-<target>.vsix`. With `--target`,
+//!   the binaries are built for that platform (cross-compiling if needed).
 //! * `cargo xtask install [--server] [--client]`
 //!   installs the server binaries with `cargo install` and/or the packaged
 //!   extension with `code --install-extension`.
+//! * `cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>`
+//!   checks pliron-lsp against a pliron release line, the newest release,
+//!   the head of pliron's repository or another git branch: a tiny
+//!   dialect crate is created, and `pliron-lsp check` must build its engine
+//!   (instrumenting that pliron) and report exact diagnostics.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,8 +49,33 @@ fn host_target() -> anyhow::Result<&'static str> {
     })
 }
 
+/// The Rust target triple of a VS Code platform target.
+fn rust_triple(vscode_target: &str) -> anyhow::Result<&'static str> {
+    Ok(match vscode_target {
+        "darwin-arm64" => "aarch64-apple-darwin",
+        "darwin-x64" => "x86_64-apple-darwin",
+        "linux-x64" => "x86_64-unknown-linux-gnu",
+        "linux-arm64" => "aarch64-unknown-linux-gnu",
+        "win32-x64" => "x86_64-pc-windows-msvc",
+        "win32-arm64" => "aarch64-pc-windows-msvc",
+        other => bail!("unknown VS Code target {other}"),
+    })
+}
+
+fn exe_for(name: &str, vscode_target: &str) -> String {
+    if vscode_target.starts_with("win32") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
 fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
+}
+
+fn cargo() -> Command {
+    Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
 }
 
 const BINARIES: &[(&str, &str)] = &[
@@ -62,13 +93,25 @@ fn npx() -> &'static str {
 
 fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
     let root = root();
-    let target = match target {
-        Some(t) => t,
-        None => host_target()?.to_string(),
+    // An explicit target is built with `--target` (into target/<triple>/).
+    let (target, out, triple) = match target {
+        Some(t) => {
+            let triple = rust_triple(&t)?;
+            let out = root.join("target").join(triple).join("release");
+            (t, out, Some(triple))
+        }
+        None => (
+            host_target()?.to_string(),
+            root.join("target/release"),
+            None,
+        ),
     };
     if build {
-        let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+        let mut cmd = cargo();
         cmd.current_dir(&root).args(["build", "--release"]);
+        if let Some(triple) = triple {
+            cmd.args(["--target", triple]);
+        }
         for (package, _) in BINARIES {
             cmd.args(["-p", package]);
         }
@@ -79,8 +122,8 @@ fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
     let server = ext.join("server");
     std::fs::create_dir_all(&server)?;
     for (_, bin) in BINARIES {
-        let from = root.join("target/release").join(exe(bin));
-        let to = server.join(exe(bin));
+        let from = out.join(exe_for(bin, &target));
+        let to = server.join(exe_for(bin, &target));
         // Copy then rename, so a running server keeps its (old) binary.
         let tmp = to.with_extension("tmp");
         std::fs::copy(&from, &tmp)
@@ -90,9 +133,13 @@ fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
     }
 
     if !ext.join("node_modules").is_dir() {
-        run(Command::new(npm()).current_dir(&ext).args(["ci", "--no-audit", "--no-fund"]))?;
+        run(Command::new(npm())
+            .current_dir(&ext)
+            .args(["ci", "--no-audit", "--no-fund"]))?;
     }
-    run(Command::new(npm()).current_dir(&ext).args(["run", "compile"]))?;
+    run(Command::new(npm())
+        .current_dir(&ext)
+        .args(["run", "compile"]))?;
 
     let out_dir = root.join("dist");
     std::fs::create_dir_all(&out_dir)?;
@@ -103,6 +150,120 @@ fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
         .arg(&vsix))?;
     eprintln!("\npackaged {}", vsix.display());
     Ok(vsix)
+}
+
+/// The tiny dialect of `check-pliron`: one op whose format has a keyword.
+const CHECK_DIALECT: &str = r#"//! A tiny dialect for checking pliron-lsp against a pliron version.
+
+use pliron::builtin::op_interfaces::{NOpdsInterface, NResultsInterface};
+use pliron::derive::pliron_op;
+
+/// Does nothing, now.
+#[pliron_op(
+    name = "ci.nop",
+    format = "`now`",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+    verifier = "succ"
+)]
+pub struct NopOp;
+"#;
+
+const CHECK_GOOD: &str = "builtin.module @m {\n  ^entry():\n  ci.nop now;\n  ci.nop now\n}\n";
+
+/// An unknown op (line 4) and a wrong keyword (line 5): the instrumented
+/// parser must report both, at their positions.
+const CHECK_BAD: &str =
+    "builtin.module @m {\n  ^entry():\n  ci.nop now;\n  ci.nopp now;\n  ci.nop later\n}\n";
+
+/// `cargo xtask check-pliron <source>`, see the module docs.
+fn check_pliron(source: &str) -> anyhow::Result<()> {
+    let root = root();
+    let (spec, slug) = match source {
+        // The default branch of pliron's repository.
+        "head" => (
+            r#"{ git = "https://github.com/pliron-org/pliron" }"#.to_string(),
+            "head".to_string(),
+        ),
+        s if s.starts_with("git:") => {
+            let rest = &s[4..];
+            match rest.split_once('#') {
+                Some((url, branch)) => (
+                    format!("{{ git = {url:?}, branch = {branch:?} }}"),
+                    format!("git-{branch}"),
+                ),
+                None => (format!("{{ git = {rest:?} }}"), "git".to_string()),
+            }
+        }
+        // The newest release on crates.io.
+        "latest" => (r#""*""#.to_string(), "latest".to_string()),
+        version => (format!("{version:?}"), version.replace('.', "_")),
+    };
+    run(cargo()
+        .current_dir(&root)
+        .args(["build", "-p", "pliron-lsp"]))?;
+    let server = root.join("target/debug").join(exe("pliron-lsp"));
+
+    // Kept under target/ so that repeated runs build incrementally.
+    let dir = root.join("target/check-pliron").join(&slug);
+    std::fs::create_dir_all(dir.join("src"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"ci-dialect\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\npliron = {spec}\n\n[workspace]\n"
+        ),
+    )?;
+    std::fs::write(dir.join("src/lib.rs"), CHECK_DIALECT)?;
+    std::fs::write(dir.join("good.pliron"), CHECK_GOOD)?;
+    std::fs::write(dir.join("bad.pliron"), CHECK_BAD)?;
+    // Always resolve the newest matching pliron.
+    let _ = std::fs::remove_file(dir.join("Cargo.lock"));
+    run(cargo().current_dir(&dir).arg("generate-lockfile"))?;
+    // pliron 0.16 and 0.17 accept any pliron-derive 0.x but only build with
+    // their own version: pin it, as a project's lock file does.
+    let lock = std::fs::read_to_string(dir.join("Cargo.lock"))?;
+    let version_of = |name: &str| {
+        lock.split("[[package]]")
+            .find(|p| p.contains(&format!("name = \"{name}\"\n")))
+            .and_then(|p| p.lines().find_map(|l| l.strip_prefix("version = ")))
+            .map(|v| v.trim_matches('"').to_string())
+    };
+    if let (Some(pliron), Some(derive)) = (version_of("pliron"), version_of("pliron-derive"))
+        && pliron != derive
+        && !source.starts_with("git:")
+        && source != "head"
+    {
+        run(cargo()
+            .current_dir(&dir)
+            .args(["update", "pliron-derive", "--precise", &pliron]))?;
+    }
+
+    let check = |file: &str| -> anyhow::Result<(bool, String)> {
+        eprintln!("$ pliron-lsp check {file}");
+        let out = Command::new(&server)
+            .current_dir(&dir)
+            .args(["check", file])
+            .output()
+            .context("running pliron-lsp")?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        print!("{stdout}");
+        Ok((out.status.success(), stdout))
+    };
+    if !check("good.pliron")?.0 {
+        bail!("good.pliron must check cleanly against pliron {source}");
+    }
+    let (ok, out) = check("bad.pliron")?;
+    let expected = [
+        "bad.pliron:4:3: error[parse]: Unregistered Op ci.nopp",
+        "bad.pliron:5:",
+    ];
+    if ok || !expected.iter().all(|e| out.contains(e)) {
+        bail!(
+            "bad.pliron must report {expected:?} (from the dialect engine) against pliron {source}"
+        );
+    }
+    eprintln!("\npliron {source}: OK");
+    Ok(())
 }
 
 fn install(server: bool, client: bool) -> anyhow::Result<()> {
@@ -138,6 +299,12 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|i| rest.get(i + 1).cloned());
             dist(!flag("--no-build"), target).map(|_| ())
         }
+        "check-pliron" => match rest.first() {
+            Some(source) => check_pliron(source),
+            None => {
+                bail!("usage: cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>")
+            }
+        },
         "install" => {
             let (server, client) = match (flag("--server"), flag("--client")) {
                 (false, false) => (true, true),
@@ -147,7 +314,7 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!(
-                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]"
+                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]\n  cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>"
             );
             Ok(())
         }

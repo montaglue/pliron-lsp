@@ -157,24 +157,20 @@ pub fn check(args: &[String]) -> anyhow::Result<i32> {
     let mut findings = Vec::new();
 
     for file in &files {
-        let text = std::fs::read_to_string(file)
-            .with_context(|| format!("reading {}", file.display()))?;
+        let text =
+            std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
         let exe = if no_engine {
             None
         } else if engine_override.is_some() || no_bundles {
             reference.clone()
         } else {
-            match projects::workspace_root_of(&std::fs::canonicalize(file)?) {
+            match projects::workspace_root_of(&crate::canonicalize(file)?) {
                 None => reference.clone(),
                 Some(root) => project_engines
                     .entry(root.clone())
                     .or_insert_with(|| {
                         eprintln!("preparing the dialect engine of {}...", root.display());
-                        match projects::run(
-                            &root,
-                            &|m| eprintln!("  {m}"),
-                            &|_, _| {},
-                        ) {
+                        match projects::run(&root, &|m| eprintln!("  {m}"), &|_, _| {}) {
                             Outcome::Engine { exe, .. } => Some(exe),
                             Outcome::NoDialects => reference.clone(),
                             Outcome::Unsupported(r) => {
@@ -197,7 +193,11 @@ pub fn check(args: &[String]) -> anyhow::Result<i32> {
                 if !engines.contains_key(exe) {
                     engines.insert(exe.clone(), SyncEngine::spawn(exe)?);
                 }
-                match engines.get_mut(exe).unwrap().analyze(&text, Duration::from_secs(60)) {
+                match engines
+                    .get_mut(exe)
+                    .unwrap()
+                    .analyze(&text, Duration::from_secs(60))
+                {
                     Ok(r) => Some(r),
                     Err(e) => {
                         engines.remove(exe);
@@ -308,7 +308,10 @@ pub fn fmt(args: &[String]) -> anyhow::Result<i32> {
     for file in collect_files(&paths) {
         let text = std::fs::read_to_string(&file)?;
         let Some(out) = crate::features::formatting::format_text(&text, &unit) else {
-            eprintln!("{}: not formatted (unbalanced brackets or strings)", file.display());
+            eprintln!(
+                "{}: not formatted (unbalanced brackets or strings)",
+                file.display()
+            );
             continue;
         };
         if out != text {

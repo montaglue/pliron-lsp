@@ -31,9 +31,13 @@ fn copy_dir(from: &Path, to: &Path) {
 /// absolute in the copy.
 fn fix_api_path(dir: &Path) {
     let m = dir.join("toy-dialect/Cargo.toml");
-    let api = Path::new(env!("CARGO_MANIFEST_DIR")).join("../pliron-lsp-api").canonicalize().unwrap();
+    let api =
+        pliron_lsp::canonicalize(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../pliron-lsp-api"))
+            .unwrap();
+    // Forward slashes: a TOML string, also on Windows.
+    let api = api.display().to_string().replace('\\', "/");
     let text = std::fs::read_to_string(&m).unwrap();
-    let text = text.replace("../../../../../pliron-lsp-api", &api.display().to_string());
+    let text = text.replace("../../../../../pliron-lsp-api", &api);
     std::fs::write(&m, text).unwrap();
 }
 
@@ -48,14 +52,9 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 
 /// A target directory shared between runs, so the build is incremental.
 fn shared_target() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/test-bundles")
-        .canonicalize()
-        .unwrap_or_else(|_| {
-            let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-bundles");
-            std::fs::create_dir_all(&p).unwrap();
-            p.canonicalize().unwrap()
-        })
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-bundles");
+    std::fs::create_dir_all(&p).unwrap();
+    pliron_lsp::canonicalize(&p).unwrap()
 }
 
 fn analyze(exe: &Path, text: &str) -> pliron_lsp_protocol::AnalyzeResult {
@@ -78,7 +77,13 @@ fn analyze(exe: &Path, text: &str) -> pliron_lsp_protocol::AnalyzeResult {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(encode_line(&req).as_bytes()).unwrap();
     stdin
-        .write_all(encode_line(&Request { id: 2, body: RequestBody::Shutdown }).as_bytes())
+        .write_all(
+            encode_line(&Request {
+                id: 2,
+                body: RequestBody::Shutdown,
+            })
+            .as_bytes(),
+        )
         .unwrap();
     drop(stdin);
     let out = BufReader::new(child.stdout.take().unwrap());
@@ -115,21 +120,57 @@ fn toy_dialect_bundle() {
     let ops: Vec<&str> = m.ops.iter().map(|o| o.opid.as_str()).collect();
     assert!(ops.contains(&"toy.add"), "{ops:?}");
     // The `value` keyword of toy.print's format and the toy.num type.
-    assert!(r.spans.iter().any(|s| matches!(&s.kind, SpanKind::Type { text, .. } if text == "toy.num <32>")));
+    assert!(
+        r.spans
+            .iter()
+            .any(|s| matches!(&s.kind, SpanKind::Type { text, .. } if text == "toy.num <32>"))
+    );
     let line_of = |needle: &str| text.lines().position(|l| l.contains(needle)).unwrap() as u32 + 1;
-    assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == line_of("toy.print")));
+    assert!(
+        r.spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == line_of("toy.print"))
+    );
 
     // pliron-lsp-api: the hand-written parser of `toy.repeat 3 times` marks
     // its tokens, and the dialect's hooks run.
     let repeat = line_of("toy.repeat");
-    assert!(r.spans.iter().any(|s| matches!(&s.kind, SpanKind::Token { token_type } if token_type == "number") && s.start.line == repeat));
-    assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == repeat));
-    let lint: Vec<_> = r.hook_diags.iter().filter(|d| d.message == "adds a value to itself").collect();
+    assert!(r.spans.iter().any(
+        |s| matches!(&s.kind, SpanKind::Token { token_type } if token_type == "number")
+            && s.start.line == repeat
+    ));
+    assert!(
+        r.spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::Keyword) && s.start.line == repeat)
+    );
+    let lint: Vec<_> = r
+        .hook_diags
+        .iter()
+        .filter(|d| d.message == "adds a value to itself")
+        .collect();
     assert_eq!(lint.len(), 1, "{:#?}", r.hook_diags);
-    assert_eq!(lint[0].target, pliron_lsp_protocol::HookTarget::Operand { index: 1 });
-    assert!(m.ops.iter().any(|o| o.notes.iter().any(|n| n == "Result used 3 time(s).")), "{:#?}", m.ops);
+    assert_eq!(
+        lint[0].target,
+        pliron_lsp_protocol::HookTarget::Operand { index: 1 }
+    );
+    assert!(
+        m.ops
+            .iter()
+            .any(|o| o.notes.iter().any(|n| n == "Result used 3 time(s).")),
+        "{:#?}",
+        m.ops
+    );
     // `d` and `e` are unused.
-    assert_eq!(r.hook_hints.iter().filter(|h| h.label == "(unused)").count(), 2, "{:#?}", r.hook_hints);
+    assert_eq!(
+        r.hook_hints
+            .iter()
+            .filter(|h| h.label == "(unused)")
+            .count(),
+        2,
+        "{:#?}",
+        r.hook_hints
+    );
 
     // Edit the dialect: rename the keyword and rebuild. The new syntax is
     // picked up (and the old one rejected) without touching any user code.
@@ -138,7 +179,13 @@ fn toy_dialect_bundle() {
     std::fs::write(&lib, src.replace("`value` ` = ` $0", "`show` $0")).unwrap();
     let exe2 = bundle::build(&meta, &bundle_dir, |_| {}).expect("rebuild");
     let r = analyze(&exe2, &text);
-    assert!(!r.parse_errors.is_empty(), "old syntax must be rejected now");
-    let r = analyze(&exe2, &text.replace("toy.print value = c", "toy.print show c"));
+    assert!(
+        !r.parse_errors.is_empty(),
+        "old syntax must be rejected now"
+    );
+    let r = analyze(
+        &exe2,
+        &text.replace("toy.print value = c", "toy.print show c"),
+    );
     assert!(r.parse_errors.is_empty(), "{:#?}", r.parse_errors);
 }

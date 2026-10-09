@@ -10,26 +10,26 @@
 use std::collections::HashMap;
 
 use lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
-use pliron_ir_syntax::{Encoding, Offset, Role, TokenKind, DefKind};
+use pliron_ir_syntax::{DefKind, Encoding, Offset, Role, TokenKind};
 use pliron_lsp_protocol::SpanKind;
 
 use crate::document::Document;
 
 /// Token types, in legend order.
 pub const TYPES: &[&str] = &[
-    "namespace",     // 0: dialect prefix
-    "function",      // 1: op name, symbols
-    "type",          // 2
-    "macro",         // 3: attribute names, `!N`
-    "property",      // 4: attribute keys
-    "keyword",       // 5
-    "variable",      // 6: SSA values
-    "parameter",     // 7: block arguments
-    "label",         // 8: block labels (custom)
-    "number",        // 9
-    "string",        // 10
-    "enumMember",    // 11: words inside attributes
-    "operator",      // 12
+    "namespace",  // 0: dialect prefix
+    "function",   // 1: op name, symbols
+    "type",       // 2
+    "macro",      // 3: attribute names, `!N`
+    "property",   // 4: attribute keys
+    "keyword",    // 5
+    "variable",   // 6: SSA values
+    "parameter",  // 7: block arguments
+    "label",      // 8: block labels (custom)
+    "number",     // 9
+    "string",     // 10
+    "enumMember", // 11: words inside attributes
+    "operator",   // 12
 ];
 
 pub const MODIFIERS: &[&str] = &["declaration", "defaultLibrary", "static"];
@@ -39,10 +39,7 @@ const DEFAULT_LIB: u32 = 1 << 1;
 
 pub fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
-        token_types: TYPES
-            .iter()
-            .map(|t| SemanticTokenType::new(t))
-            .collect(),
+        token_types: TYPES.iter().map(|t| SemanticTokenType::new(t)).collect(),
         token_modifiers: MODIFIERS
             .iter()
             .map(|m| SemanticTokenModifier::new(m))
@@ -147,10 +144,12 @@ fn exact_tokens(doc: &Document) -> Option<Vec<Tok>> {
                 SpanKind::SuccessorUse { .. } => (8, 0),
                 SpanKind::AttrKey => (4, 0),
                 // Marked by a hand-written parser (pliron_lsp_api::token!).
-                SpanKind::Token { token_type } => match TYPES.iter().position(|t| t == token_type) {
-                    Some(ty) => (ty as u32, 0),
-                    None => continue,
-                },
+                SpanKind::Token { token_type } => {
+                    match TYPES.iter().position(|t| t == token_type) {
+                        Some(ty) => (ty as u32, 0),
+                        None => continue,
+                    }
+                }
                 SpanKind::Keyword => {
                     // Punctuation literals are not interesting as keywords.
                     if text[s as usize..(*end).min(e) as usize]
@@ -164,7 +163,12 @@ fn exact_tokens(doc: &Document) -> Option<Vec<Tok>> {
                 }
                 _ => continue,
             };
-            out.push(Tok { start: s, end: e.min(*end).max(s), ty, mods });
+            out.push(Tok {
+                start: s,
+                end: e.min(*end).max(s),
+                ty,
+                mods,
+            });
             continue;
         }
         match t.kind {
@@ -186,21 +190,60 @@ fn exact_tokens(doc: &Document) -> Option<Vec<Tok>> {
                 start: s,
                 end: e,
                 ty: 1,
-                mods: if symbol_defs.contains_key(&s) { DECL } else { 0 },
+                mods: if symbol_defs.contains_key(&s) {
+                    DECL
+                } else {
+                    0
+                },
             }),
-            TokenKind::OutlineRef => out.push(Tok { start: s, end: e, ty: 3, mods: 0 }),
-            TokenKind::Number => out.push(Tok { start: s, end: e, ty: 9, mods: 0 }),
-            TokenKind::String => out.push(Tok { start: s, end: e, ty: 10, mods: 0 }),
-            TokenKind::Arrow => out.push(Tok { start: s, end: e, ty: 12, mods: 0 }),
+            TokenKind::OutlineRef => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 3,
+                mods: 0,
+            }),
+            TokenKind::Number => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 9,
+                mods: 0,
+            }),
+            TokenKind::String => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 10,
+                mods: 0,
+            }),
+            TokenKind::Arrow => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 12,
+                mods: 0,
+            }),
             TokenKind::Ident => {
                 if in_kind(s, |k| matches!(k, SpanKind::Type { .. })) {
-                    out.push(Tok { start: s, end: e, ty: 2, mods: 0 });
+                    out.push(Tok {
+                        start: s,
+                        end: e,
+                        ty: 2,
+                        mods: 0,
+                    });
                 } else if in_kind(s, |k| matches!(k, SpanKind::Attr { .. })) {
-                    out.push(Tok { start: s, end: e, ty: 11, mods: 0 });
+                    out.push(Tok {
+                        start: s,
+                        end: e,
+                        ty: 11,
+                        mods: 0,
+                    });
                 } else if in_kind(s, |k| matches!(k, SpanKind::Op { .. })) {
                     // Claimed by no parser primitive: a word of an op's own
                     // (hand-written) syntax.
-                    out.push(Tok { start: s, end: e, ty: 5, mods: 0 });
+                    out.push(Tok {
+                        start: s,
+                        end: e,
+                        ty: 5,
+                        mods: 0,
+                    });
                 }
             }
             _ => {}
@@ -220,7 +263,9 @@ fn syntax_tokens(doc: &Document) -> Vec<Tok> {
             (TokenKind::QualName, Role::OpName) => {
                 qualname(&mut out, text, s, e, 1, builtin_mod(t.text(text)))
             }
-            (TokenKind::QualName, _) => qualname(&mut out, text, s, e, 2, builtin_mod(t.text(text))),
+            (TokenKind::QualName, _) => {
+                qualname(&mut out, text, s, e, 2, builtin_mod(t.text(text)))
+            }
             (_, Role::Def(d)) => {
                 let ty = match a.def(d).kind {
                     DefKind::Result => 6,
@@ -229,7 +274,12 @@ fn syntax_tokens(doc: &Document) -> Vec<Tok> {
                     DefKind::Symbol => 1,
                     DefKind::Outline => 3,
                 };
-                out.push(Tok { start: s, end: e, ty, mods: DECL });
+                out.push(Tok {
+                    start: s,
+                    end: e,
+                    ty,
+                    mods: DECL,
+                });
             }
             (_, Role::Use(d, _)) => {
                 let ty = match a.def(d).kind {
@@ -239,16 +289,61 @@ fn syntax_tokens(doc: &Document) -> Vec<Tok> {
                     DefKind::Symbol => 1,
                     DefKind::Outline => 3,
                 };
-                out.push(Tok { start: s, end: e, ty, mods: 0 });
+                out.push(Tok {
+                    start: s,
+                    end: e,
+                    ty,
+                    mods: 0,
+                });
             }
-            (_, Role::Keyword) => out.push(Tok { start: s, end: e, ty: 5, mods: 0 }),
-            (_, Role::AttrKey) => out.push(Tok { start: s, end: e, ty: 4, mods: 0 }),
-            (TokenKind::BlockLabel, _) => out.push(Tok { start: s, end: e, ty: 8, mods: 0 }),
-            (TokenKind::SymbolRef, _) => out.push(Tok { start: s, end: e, ty: 1, mods: 0 }),
-            (TokenKind::OutlineRef, _) => out.push(Tok { start: s, end: e, ty: 3, mods: 0 }),
-            (TokenKind::Number, _) => out.push(Tok { start: s, end: e, ty: 9, mods: 0 }),
-            (TokenKind::String, _) => out.push(Tok { start: s, end: e, ty: 10, mods: 0 }),
-            (TokenKind::Arrow, _) => out.push(Tok { start: s, end: e, ty: 12, mods: 0 }),
+            (_, Role::Keyword) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 5,
+                mods: 0,
+            }),
+            (_, Role::AttrKey) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 4,
+                mods: 0,
+            }),
+            (TokenKind::BlockLabel, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 8,
+                mods: 0,
+            }),
+            (TokenKind::SymbolRef, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 1,
+                mods: 0,
+            }),
+            (TokenKind::OutlineRef, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 3,
+                mods: 0,
+            }),
+            (TokenKind::Number, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 9,
+                mods: 0,
+            }),
+            (TokenKind::String, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 10,
+                mods: 0,
+            }),
+            (TokenKind::Arrow, _) => out.push(Tok {
+                start: s,
+                end: e,
+                ty: 12,
+                mods: 0,
+            }),
             _ => {}
         }
     }
@@ -282,7 +377,11 @@ pub fn semantic_tokens(
                 let p = doc.line_index.position(s, &doc.text, enc);
                 let pe = doc.line_index.position(e, &doc.text, enc);
                 let delta_line = p.line - prev_line;
-                let delta_start = if delta_line == 0 { p.col - prev_col } else { p.col };
+                let delta_start = if delta_line == 0 {
+                    p.col - prev_col
+                } else {
+                    p.col
+                };
                 out.push(SemanticToken {
                     delta_line,
                     delta_start,

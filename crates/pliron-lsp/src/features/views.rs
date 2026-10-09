@@ -133,20 +133,35 @@ pub fn syntax_tree(doc: &Document) -> String {
         let (l2, c2) = doc.line_index.pliron_position(e, text);
         format!("{l1}:{c1}..{l2}:{c2}")
     };
-    fn stmt(out: &mut String, doc: &Document, id: StmtId, depth: usize, span: &dyn Fn(u32, u32) -> String) {
+    fn stmt(
+        out: &mut String,
+        doc: &Document,
+        id: StmtId,
+        depth: usize,
+        span: &dyn Fn(u32, u32) -> String,
+    ) {
         let t = &doc.syntax.tree;
         let text = &doc.text;
         let s = t.stmt(id);
         let ind = "  ".repeat(depth);
         let results: Vec<&str> = s.results.iter().map(|r| t.tok(*r).text(text)).collect();
-        let op = s.op_name.map(|o| t.tok(o).text(text)).unwrap_or("<missing op>");
+        let op = s
+            .op_name
+            .map(|o| t.tok(o).text(text))
+            .unwrap_or("<missing op>");
         let (a, b) = t.stmt_range(id);
         let res = if results.is_empty() {
             String::new()
         } else {
             format!("{} = ", results.join(", "))
         };
-        writeln!(out, "{ind}STMT {res}{op}  ({} body tokens)  {}", s.body.len(), span(a, b)).unwrap();
+        writeln!(
+            out,
+            "{ind}STMT {res}{op}  ({} body tokens)  {}",
+            s.body.len(),
+            span(a, b)
+        )
+        .unwrap();
         for r in &s.regions {
             let (a, b) = t.region_range(*r);
             writeln!(out, "{ind}  REGION  {}", span(a, b)).unwrap();
@@ -155,7 +170,13 @@ pub fn syntax_tree(doc: &Document) -> String {
             }
         }
     }
-    fn block(out: &mut String, doc: &Document, id: BlockId, depth: usize, span: &dyn Fn(u32, u32) -> String) {
+    fn block(
+        out: &mut String,
+        doc: &Document,
+        id: BlockId,
+        depth: usize,
+        span: &dyn Fn(u32, u32) -> String,
+    ) {
         let t = &doc.syntax.tree;
         let text = &doc.text;
         let b = t.block(id);
@@ -164,10 +185,9 @@ pub fn syntax_tree(doc: &Document) -> String {
             .args
             .iter()
             .map(|a| {
-                let ty = a
-                    .ty
-                    .map(|(s, e)| &text[t.tok(s).start as usize..t.tok(e).end as usize])
-                    .unwrap_or("?");
+                let ty =
+                    a.ty.map(|(s, e)| &text[t.tok(s).start as usize..t.tok(e).end as usize])
+                        .unwrap_or("?");
                 format!("{}: {ty}", t.tok(a.name).text(text))
             })
             .collect();
@@ -193,7 +213,14 @@ pub fn syntax_tree(doc: &Document) -> String {
     if !a.diagnostics.is_empty() {
         out.push('\n');
         for d in &a.diagnostics {
-            writeln!(out, "// {:?}: {} at {}", d.severity, d.message, span(d.start, d.end)).unwrap();
+            writeln!(
+                out,
+                "// {:?}: {} at {}",
+                d.severity,
+                d.message,
+                span(d.start, d.end)
+            )
+            .unwrap();
         }
     }
     out
@@ -217,11 +244,7 @@ pub fn registry(index: Option<&DialectIndex>) -> String {
             let uri = lsp_types::Url::from_file_path(&e.file)
                 .map(|u| format!("{u}#L{}", e.line + 1))
                 .unwrap_or_default();
-            let file = e
-                .file
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("?");
+            let file = e.file.file_name().and_then(|f| f.to_str()).unwrap_or("?");
             writeln!(
                 out,
                 "| `{}` | `{}` | [{file}:{}]({uri}) |",

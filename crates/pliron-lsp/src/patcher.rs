@@ -31,7 +31,9 @@ fn parse(diff: &str) -> anyhow::Result<Vec<FilePatch>> {
                 .context("malformed diff: `---` without `+++`")?;
             let strip = |p: &str| {
                 let p = p.split('\t').next().unwrap_or(p).trim();
-                p.split_once('/').map(|(_, r)| r.to_string()).unwrap_or_default()
+                p.split_once('/')
+                    .map(|(_, r)| r.to_string())
+                    .unwrap_or_default()
             };
             files.push(FilePatch {
                 path: strip(new),
@@ -83,11 +85,7 @@ fn find(hay: &[String], needle: &[&str], expected: usize) -> Option<usize> {
         return Some(expected.min(hay.len()));
     }
     let matches_at = |i: usize| {
-        i + needle.len() <= hay.len()
-            && needle
-                .iter()
-                .zip(&hay[i..])
-                .all(|(n, h)| eq_fuzzy(n, h))
+        i + needle.len() <= hay.len() && needle.iter().zip(&hay[i..]).all(|(n, h)| eq_fuzzy(n, h))
     };
     (0..hay.len())
         .filter(|&i| matches_at(i))
@@ -123,7 +121,8 @@ fn apply_hunk(file: &mut Vec<String>, hunk: &Hunk, offset: &mut isize) -> bool {
             .map(|(_, t)| t.clone())
             .collect();
         if let Some(at) = find(file, &old, expected + lead) {
-            *offset += at as isize - (expected + lead) as isize + new.len() as isize - old.len() as isize;
+            *offset +=
+                at as isize - (expected + lead) as isize + new.len() as isize - old.len() as isize;
             file.splice(at..at + old.len(), new);
             return true;
         }
@@ -138,9 +137,19 @@ pub fn apply_in_memory(
     diff: &str,
     read: impl Fn(&str) -> anyhow::Result<Option<String>>,
 ) -> anyhow::Result<Vec<(String, String)>> {
+    apply_in_memory_filtered(diff, |_| true, read)
+}
+
+/// [`apply_in_memory`], for the files of the diff whose path passes
+/// `filter` only.
+pub fn apply_in_memory_filtered(
+    diff: &str,
+    filter: impl Fn(&str) -> bool,
+    read: impl Fn(&str) -> anyhow::Result<Option<String>>,
+) -> anyhow::Result<Vec<(String, String)>> {
     let mut failed = Vec::new();
     let mut out = Vec::new();
-    for fp in parse(diff)? {
+    for fp in parse(diff)?.into_iter().filter(|fp| filter(&fp.path)) {
         let original = if fp.new_file {
             String::new()
         } else {
@@ -192,7 +201,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("a.rs");
         // The original file the diff was made against had no `extra` lines.
-        std::fs::write(&f, "extra\nextra\nfn a() {\n    one();\n    two();\n}\nCHANGED CONTEXT\n").unwrap();
+        std::fs::write(
+            &f,
+            "extra\nextra\nfn a() {\n    one();\n    two();\n}\nCHANGED CONTEXT\n",
+        )
+        .unwrap();
         let diff = "--- a/a.rs\n+++ b/a.rs\n@@ -1,5 +1,6 @@\n fn a() {\n     one();\n+    inserted();\n     two();\n }\n context\n--- /dev/null\n+++ b/new.rs\n@@ -0,0 +1,2 @@\n+pub fn x() {}\n+// new\n";
         apply(diff, |p| dir.path().join(p)).unwrap();
         assert_eq!(

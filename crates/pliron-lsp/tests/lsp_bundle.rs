@@ -28,9 +28,13 @@ fn copy_dir(from: &Path, to: &Path) {
 /// absolute in the copy.
 fn fix_api_path(dir: &Path) {
     let m = dir.join("toy-dialect/Cargo.toml");
-    let api = Path::new(env!("CARGO_MANIFEST_DIR")).join("../pliron-lsp-api").canonicalize().unwrap();
+    let api =
+        pliron_lsp::canonicalize(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../pliron-lsp-api"))
+            .unwrap();
+    // Forward slashes: a TOML string, also on Windows.
+    let api = api.display().to_string().replace('\\', "/");
     let text = std::fs::read_to_string(&m).unwrap();
-    let text = text.replace("../../../../../pliron-lsp-api", &api.display().to_string());
+    let text = text.replace("../../../../../pliron-lsp-api", &api);
     std::fs::write(&m, text).unwrap();
 }
 
@@ -47,7 +51,12 @@ fn opening_a_file_builds_the_project_engine() {
     let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-bundles");
     std::fs::create_dir_all(&shared).unwrap();
     // SAFETY: set before any other thread is started by this test binary.
-    unsafe { std::env::set_var("CARGO_TARGET_DIR", shared.canonicalize().unwrap()) };
+    unsafe {
+        std::env::set_var(
+            "CARGO_TARGET_DIR",
+            pliron_lsp::canonicalize(&shared).unwrap(),
+        )
+    };
 
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("toy");
@@ -93,37 +102,71 @@ fn opening_a_file_builds_the_project_engine() {
         "textDocument/definition",
         json!({ "textDocument": { "uri": uri }, "position": pos_of(&text, "toy.add") }),
     );
-    assert!(def["uri"].as_str().unwrap().ends_with("toy-dialect/src/lib.rs"), "{def}");
+    assert!(
+        def["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("toy-dialect/src/lib.rs"),
+        "{def}"
+    );
 
     // pliron-lsp-api hooks: a lint warning on the second operand of
     // `toy.add c, c`...
     let diags = c.wait_diagnostics(|d| d.iter().any(|x| x["message"] == "adds a value to itself"));
-    let lint = diags.iter().find(|x| x["message"] == "adds a value to itself").unwrap();
+    let lint = diags
+        .iter()
+        .find(|x| x["message"] == "adds a value to itself")
+        .unwrap();
     assert_eq!(lint["severity"], 2, "{lint:#}");
-    assert!(lint["source"].as_str().unwrap().ends_with("self_add"), "{lint:#}");
+    assert!(
+        lint["source"].as_str().unwrap().ends_with("self_add"),
+        "{lint:#}"
+    );
     let mut second_c = pos_of(&text, "toy.add c, c");
-    second_c["character"] = json!(second_c["character"].as_u64().unwrap() + "toy.add c, ".len() as u64);
+    second_c["character"] =
+        json!(second_c["character"].as_u64().unwrap() + "toy.add c, ".len() as u64);
     assert_eq!(lint["range"]["start"], second_c, "{lint:#}");
     // ...hover notes and inlay hints...
     let h = c.request(
         "textDocument/hover",
         json!({ "textDocument": { "uri": uri }, "position": pos_of(&text, "toy.add a") }),
     );
-    assert!(h["contents"]["value"].as_str().unwrap().contains("Result used 3 time(s)."), "{h}");
+    assert!(
+        h["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("Result used 3 time(s)."),
+        "{h}"
+    );
     let hints = c.request(
         "textDocument/inlayHint",
         json!({ "textDocument": { "uri": uri }, "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 100, "character": 0 } } }),
     );
-    let unused = hints.as_array().unwrap().iter().filter(|h| h["label"] == "(unused)").count();
+    let unused = hints
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|h| h["label"] == "(unused)")
+        .count();
     assert_eq!(unused, 2, "{hints:#}");
     // ...and `hints!`: a completion snippet for the hand-written syntax.
     let items = c.request(
         "textDocument/completion",
         json!({ "textDocument": { "uri": uri }, "position": pos_of(&text, "toy.return") }),
     );
-    let items = items.as_array().or_else(|| items["items"].as_array()).unwrap().clone();
-    let repeat = items.iter().find(|i| i["label"] == "toy.repeat").expect("toy.repeat completion");
-    assert_eq!(repeat["textEdit"]["newText"], "toy.repeat ${1:2} times", "{repeat:#}");
+    let items = items
+        .as_array()
+        .or_else(|| items["items"].as_array())
+        .unwrap()
+        .clone();
+    let repeat = items
+        .iter()
+        .find(|i| i["label"] == "toy.repeat")
+        .expect("toy.repeat completion");
+    assert_eq!(
+        repeat["textEdit"]["newText"], "toy.repeat ${1:2} times",
+        "{repeat:#}"
+    );
 
     // Change the dialect: `toy.print value = c` becomes `toy.print show c`.
     let lib = dir.join("toy-dialect/src/lib.rs");
@@ -136,8 +179,15 @@ fn opening_a_file_builds_the_project_engine() {
     // The old syntax is now an error...
     let is_error = |x: &Value| x["severity"] == 1;
     let diags = c.wait_diagnostics(|d| d.iter().any(is_error));
-    assert!(diags.iter().find(|x| is_error(x)).unwrap()["source"] == "pliron", "{diags:#?}");
+    assert!(
+        diags.iter().find(|x| is_error(x)).unwrap()["source"] == "pliron",
+        "{diags:#?}"
+    );
     // ...and the new one is accepted.
-    c.change_uri(&uri, 2, &text.replace("toy.print value = c", "toy.print show c"));
+    c.change_uri(
+        &uri,
+        2,
+        &text.replace("toy.print value = c", "toy.print show c"),
+    );
     c.wait_diagnostics(|d| !d.is_empty() && !d.iter().any(is_error));
 }

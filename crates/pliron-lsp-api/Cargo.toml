@@ -3,7 +3,8 @@ name = "pliron-lsp-api"
 description = "Optional hooks for pliron dialects to customize pliron-lsp"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# Dialect crates depend on this one: keep it usable with older compilers.
+rust-version = "1.85"
 license.workspace = true
 repository.workspace = true
 

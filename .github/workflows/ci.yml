@@ -1,0 +1,73 @@
+# Lints, Rust tests and VS Code integration tests (on Linux), for every
+# push to main and every pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy (dialect hooks enabled)
+        run: cargo clippy -p pliron-lsp-engine --features hooks --all-targets -- -D warnings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Type-check the VS Code extension
+        working-directory: editors/vscode
+        run: |
+          npm ci --no-audit --no-fund
+          npm run compile
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Includes building the toy dialect's engine (instrumented pliron).
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Rust tests (dialect hooks enabled)
+        run: |
+          cargo test -p pliron-lsp-engine --features hooks
+          cargo test -p pliron-lsp-api --features engine
+      - name: Build the server for the extension tests
+        run: cargo build -p pliron-lsp -p pliron-lsp-engine-ref
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install extension dependencies
+        working-directory: editors/vscode
+        run: npm ci --no-audit --no-fund
+      # Electron's sandbox needs unprivileged user namespaces, which
+      # Ubuntu 24.04 restricts.
+      - name: Allow the Electron sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: VS Code integration tests
+        working-directory: editors/vscode
+        run: xvfb-run -a npm test

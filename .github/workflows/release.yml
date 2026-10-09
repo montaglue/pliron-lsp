@@ -1,0 +1,83 @@
+# Platform-specific VS Code extension packages (server and reference
+# engine bundled), built on demand or for a `v*` tag. A tag also creates a
+# GitHub release with the packages. Only the linux-x64 package is tested.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  dist:
+    name: dist (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-latest, cross: aarch64-unknown-linux-gnu }
+          - { target: darwin-arm64, os: macos-latest }
+          - { target: darwin-x64, os: macos-latest, cross: x86_64-apple-darwin }
+          - { target: win32-x64, os: windows-latest }
+          - { target: win32-arm64, os: windows-latest, cross: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.cross }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install the arm64 Linux linker
+        if: matrix.target == 'linux-arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install extension dependencies
+        working-directory: editors/vscode
+        run: npm ci --no-audit --no-fund
+      - name: Build and package
+        run: cargo xtask dist --target ${{ matrix.target }}
+      # The linux-x64 package is tested as shipped: the extension must find
+      # and use its bundled server.
+      - name: Allow the Electron sandbox
+        if: matrix.target == 'linux-x64'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Test the packaged extension
+        if: matrix.target == 'linux-x64'
+        working-directory: editors/vscode
+        env:
+          PLIRON_TEST_BUNDLED: "1"
+        run: xvfb-run -a npm test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pliron-${{ matrix.target }}
+          path: dist/pliron-${{ matrix.target }}.vsix
+          if-no-files-found: error
+
+  release:
+    needs: dist
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.vsix --repo "$GITHUB_REPOSITORY" --generate-notes

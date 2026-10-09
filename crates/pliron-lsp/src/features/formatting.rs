@@ -82,7 +82,13 @@ fn line_levels(doc: &Document) -> Option<Vec<Option<usize>>> {
     for i in 0..tree.stmts.len() {
         let sid = StmtId(i as u32);
         let s = tree.stmt(sid);
-        for t in s.results.iter().chain(s.op_name.iter()).chain(s.body.iter()).chain(s.semicolon.iter()) {
+        for t in s
+            .results
+            .iter()
+            .chain(s.op_name.iter())
+            .chain(s.body.iter())
+            .chain(s.semicolon.iter())
+        {
             owner[*t as usize] = Owner::StmtCont(sid);
         }
         owner[s.first as usize] = Owner::StmtFirst(sid);
@@ -179,7 +185,11 @@ pub fn format_edits(doc: &Document, unit: &str, lines: Option<(u32, u32)>) -> Op
         let trimmed = content.trim_start();
         if trimmed.is_empty() {
             if !content.is_empty() {
-                edits.push(Edit { start, end, text: String::new() });
+                edits.push(Edit {
+                    start,
+                    end,
+                    text: String::new(),
+                });
             }
             continue;
         }
@@ -205,7 +215,11 @@ pub fn format_edits(doc: &Document, unit: &str, lines: Option<(u32, u32)>) -> Op
     }
     if lines.is_none() && !text.is_empty() && !text.ends_with('\n') {
         let end = text.len() as Offset;
-        edits.push(Edit { start: end, end, text: "\n".into() });
+        edits.push(Edit {
+            start: end,
+            end,
+            text: "\n".into(),
+        });
     }
     Some(edits)
 }

@@ -8,11 +8,10 @@ use core::{num::ParseIntError, str::FromStr};
 use crate::{
     arg_err,
     attribute::AttrObj,
-    input_err,
     basic_block::BasicBlock,
     builtin::given_names::set_operation_result_name,
     combine::{
-        Parser, Positioned, Stream, any, between, many, many1, none_of, optional,
+        Parser, Stream, any, between, many, many1, none_of, optional,
         parser::char::{digit, spaces},
         sep_by, token,
     },
@@ -255,7 +254,7 @@ pub fn zero_or_more_parser<Input: Stream<Token = char>, Output>(
 /// the SSA operands of an [Operation]. If the SSA value hasn't been defined yet,
 /// a [forward reference](crate::builtin::ops::ForwardRefOp) is returned.
 pub fn ssa_opd_parse<'a>(state_stream: &mut StateStream<'a>, _arg: ()) -> ParseResult<'a, Value> {
-    let start = state_stream.position();
+    let start = crate::combine::Positioned::position(state_stream);
     Identifier::parser(())
         .parse_stream(state_stream)
         .map(|opd| {
@@ -263,7 +262,7 @@ pub fn ssa_opd_parse<'a>(state_stream: &mut StateStream<'a>, _arg: ()) -> ParseR
                 .state
                 .name_tracker
                 .ssa_use(state_stream.state.ctx, &opd);
-            let end = state_stream.position();
+            let end = crate::combine::Positioned::position(state_stream);
             crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::OperandUse {
                 value,
                 start,
@@ -288,7 +287,7 @@ pub fn block_opd_parse<'a>(
     state_stream: &mut StateStream<'a>,
     _arg: (),
 ) -> ParseResult<'a, Ptr<BasicBlock>> {
-    let start = state_stream.position();
+    let start = crate::combine::Positioned::position(state_stream);
     token('^')
         .with(Identifier::parser(()))
         .parse_stream(state_stream)
@@ -297,7 +296,7 @@ pub fn block_opd_parse<'a>(
                 .state
                 .name_tracker
                 .block_use(state_stream.state.ctx, &opd);
-            let end = state_stream.position();
+            let end = crate::combine::Positioned::position(state_stream);
             crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::SuccessorUse {
                 block,
                 start,
@@ -330,7 +329,7 @@ pub fn process_parsed_ssa_defs(
             .first()
             .map(|(_, loc)| loc.clone())
             .unwrap_or_else(|| op.deref(ctx).loc());
-        return input_err!(
+        return crate::input_err!(
             loc,
             "{} result name(s) given, but this operation has {} result(s)",
             results.len(),

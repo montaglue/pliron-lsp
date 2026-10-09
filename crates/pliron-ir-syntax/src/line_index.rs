@@ -189,9 +189,18 @@ mod tests {
         }
         // '😀' is 2 UTF-16 units, 1 UTF-32 unit, 4 UTF-8 bytes.
         let y = text.find('y').unwrap() as Offset;
-        assert_eq!(li.position(y, text, Encoding::Utf16), LinePos { line: 1, col: 3 });
-        assert_eq!(li.position(y, text, Encoding::Utf32), LinePos { line: 1, col: 2 });
-        assert_eq!(li.position(y, text, Encoding::Utf8), LinePos { line: 1, col: 5 });
+        assert_eq!(
+            li.position(y, text, Encoding::Utf16),
+            LinePos { line: 1, col: 3 }
+        );
+        assert_eq!(
+            li.position(y, text, Encoding::Utf32),
+            LinePos { line: 1, col: 2 }
+        );
+        assert_eq!(
+            li.position(y, text, Encoding::Utf8),
+            LinePos { line: 1, col: 5 }
+        );
     }
 
     #[test]
@@ -204,15 +213,24 @@ mod tests {
         let c = text.find('c').unwrap() as Offset;
         assert_eq!(li.offset_of_pliron(2, 3, text), c);
         // Past the end of a line clamps to the next line start.
-        assert_eq!(li.offset_of_pliron(1, 99, text), text.find('\n').unwrap() as Offset + 1);
+        assert_eq!(
+            li.offset_of_pliron(1, 99, text),
+            text.find('\n').unwrap() as Offset + 1
+        );
     }
 
     #[test]
     fn clamping() {
         let text = "abc\ndef";
         let li = LineIndex::new(text);
-        assert_eq!(li.offset(LinePos { line: 0, col: 99 }, text, Encoding::Utf16), 3);
-        assert_eq!(li.offset(LinePos { line: 9, col: 0 }, text, Encoding::Utf16), 7);
+        assert_eq!(
+            li.offset(LinePos { line: 0, col: 99 }, text, Encoding::Utf16),
+            3
+        );
+        assert_eq!(
+            li.offset(LinePos { line: 9, col: 0 }, text, Encoding::Utf16),
+            7
+        );
         assert_eq!(li.line_end(0, text), 3);
     }
 }

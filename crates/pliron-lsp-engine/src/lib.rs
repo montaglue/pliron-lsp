@@ -183,8 +183,7 @@ pub fn run_stdio(info: BundleInfo) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let Some(payload) = pliron_lsp_protocol::decode_payload(&line).or(Some(line.trim()))
-        else {
+        let Some(payload) = pliron_lsp_protocol::decode_payload(&line).or(Some(line.trim())) else {
             continue;
         };
         if payload.is_empty() {

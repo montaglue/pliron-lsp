@@ -84,8 +84,14 @@ pub fn load_metadata(dir: &Path) -> anyhow::Result<Metadata> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DepSpec {
     Path(PathBuf),
-    Registry { version: String },
-    Git { url: String, reference: Option<(String, String)>, rev: String },
+    Registry {
+        version: String,
+    },
+    Git {
+        url: String,
+        reference: Option<(String, String)>,
+        rev: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -102,9 +108,12 @@ pub struct DialectCrate {
 #[derive(Clone, Debug)]
 pub enum PlironSource {
     /// crates.io: separate pliron and pliron-derive crate directories.
+    /// Their versions may differ: pliron 0.16 and 0.17 accept any
+    /// pliron-derive 0.x.
     Registry {
         pliron_dir: PathBuf,
         derive_dir: PathBuf,
+        derive_version: String,
     },
     /// A git checkout of the pliron repository.
     Git {
@@ -259,7 +268,9 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
 
     let mut dialects = Vec::new();
     for node in &resolve.nodes {
-        let Some(pkg) = by_id.get(&node.id) else { continue };
+        let Some(pkg) = by_id.get(&node.id) else {
+            continue;
+        };
         if core.contains(&node.id) {
             continue;
         }
@@ -269,13 +280,17 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
             continue;
         }
         let uses_pliron = node.deps.iter().any(|d| {
-            core.contains(&d.pkg)
-                && d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal)
+            core.contains(&d.pkg) && d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal)
         });
         if !forced && !uses_pliron {
             continue;
         }
-        let dir = pkg.manifest_path.parent().unwrap().as_std_path().to_path_buf();
+        let dir = pkg
+            .manifest_path
+            .parent()
+            .unwrap()
+            .as_std_path()
+            .to_path_buf();
         // Crates needing the compiler's private crates cannot be built as
         // ordinary dependencies.
         if std::fs::read_to_string(&lib.src_path)
@@ -307,16 +322,41 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
             supported_versions().join(", ")
         )));
     };
-    let pliron_dir = pliron.manifest_path.parent().unwrap().as_std_path().to_path_buf();
+    let pliron_dir = pliron
+        .manifest_path
+        .parent()
+        .unwrap()
+        .as_std_path()
+        .to_path_buf();
     let source = if is_crates_io(pliron) {
-        let derive = meta
-            .packages
+        // The pliron-derive that pliron actually uses (not necessarily of
+        // the same version).
+        let derive = resolve
+            .nodes
             .iter()
-            .find(|p| p.name == "pliron-derive" && p.version == pliron.version)
+            .find(|n| n.id == pliron.id)
+            .and_then(|n| {
+                n.deps
+                    .iter()
+                    .filter_map(|d| by_id.get(&d.pkg))
+                    .find(|p| p.name == "pliron-derive")
+            })
+            .copied()
+            .or_else(|| {
+                meta.packages
+                    .iter()
+                    .find(|p| p.name == "pliron-derive" && p.version == pliron.version)
+            })
             .ok_or_else(|| NoBundle::Unsupported("pliron-derive not found".into()))?;
         PlironSource::Registry {
             pliron_dir,
-            derive_dir: derive.manifest_path.parent().unwrap().as_std_path().to_path_buf(),
+            derive_dir: derive
+                .manifest_path
+                .parent()
+                .unwrap()
+                .as_std_path()
+                .to_path_buf(),
+            derive_version: derive.version.to_string(),
         }
     } else {
         match dep_spec(pliron) {
@@ -438,7 +478,9 @@ pub fn user_patches(root: &Path) -> String {
     };
     let mut out = String::new();
     for (registry, entries) in patch {
-        let Some(entries) = entries.as_table() else { continue };
+        let Some(entries) = entries.as_table() else {
+            continue;
+        };
         let mut table = toml::Table::new();
         for (name, spec) in entries {
             if name == "pliron" || name == "pliron-derive" {
@@ -449,7 +491,10 @@ pub fn user_patches(root: &Path) -> String {
                 && let Some(p) = t.get("path").and_then(|p| p.as_str())
             {
                 let abs = root.join(p);
-                t.insert("path".into(), toml::Value::String(abs.display().to_string()));
+                t.insert(
+                    "path".into(),
+                    toml::Value::String(abs.display().to_string()),
+                );
             }
             table.insert(name.clone(), spec);
         }
@@ -527,65 +572,107 @@ fn engine_manifest(sel: &Selection) -> String {
     };
     format!(
         "[package]\nname = \"pliron-lsp-engine\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\npliron = {pliron}\npliron-lsp-protocol = {{ path = \"../pliron-lsp-protocol\" }}\nserde_json = \"1\"\n{api}\n[features]\ndefault = [\"{cfg}\"{hooks}]\n{cfg} = []\nhooks = [{}]\n",
-        if sel.api.is_some() { "\"dep:pliron-lsp-api\"" } else { "" }
+        if sel.api.is_some() {
+            "\"dep:pliron-lsp-api\""
+        } else {
+            ""
+        }
     )
 }
 
-/// Copy the project's pliron sources into `dest` and instrument them.
+/// The literal-keyword parser of declarative formats.
+const DERIVE_STRING_PARSER: &str = "::pliron::combine::parser::char::string(";
+const DERIVE_KEYWORD_PARSER: &str = "::pliron::lsp::keyword(";
+
+/// pliron-derive's instrumentation: the literals of declarative formats are
+/// parsed with `pliron::lsp::keyword`, which records them. That is the only
+/// change, made by substitution so that it fits every pliron-derive version.
+fn instrument_derive(
+    src: &Path,
+    out: &Path,
+    files: &mut HashMap<PathBuf, Vec<u8>>,
+) -> anyhow::Result<()> {
+    for e in std::fs::read_dir(src).with_context(|| format!("reading {}", src.display()))? {
+        let p = e?.path();
+        let name = p.file_name().unwrap_or_default().to_owned();
+        if p.is_dir() {
+            instrument_derive(&p, &out.join(&name), files)?;
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            let text = std::fs::read_to_string(&p)?;
+            if text.contains(DERIVE_STRING_PARSER) {
+                let text = text.replace(DERIVE_STRING_PARSER, DERIVE_KEYWORD_PARSER);
+                files.insert(out.join(&name), text.into_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Copy the project's pliron sources into `dest` and instrument them:
+/// pliron with the patch for its version, pliron-derive by
+/// [`instrument_derive`].
 fn vendor_pliron(sel: &Selection, dest: &Path) -> anyhow::Result<()> {
     let (_, diff) = embedded::PATCHES
         .iter()
         .find(|(v, _)| *v == sel.patch_version)
         .context("missing instrumentation patch")?;
-    // Patch paths are relative to a pliron repository: `src/...` and
-    // `pliron-derive/src/...`.
-    let (pliron_src, derive_src, out_pliron, out_derive): (PathBuf, PathBuf, PathBuf, PathBuf) =
-        match &sel.pliron {
-            PlironSource::Registry {
-                pliron_dir,
-                derive_dir,
-            } => {
-                copy_tree(pliron_dir, &dest.join("pliron"))?;
-                copy_tree(derive_dir, &dest.join("pliron-derive"))?;
-                for c in ["pliron", "pliron-derive"] {
-                    let m = dest.join(c).join("Cargo.toml");
-                    let cleaned = clean_manifest(&std::fs::read_to_string(&m)?);
-                    write_if_changed(&m, cleaned.as_bytes())?;
-                }
-                (
-                    pliron_dir.clone(),
-                    derive_dir.clone(),
-                    dest.join("pliron"),
-                    dest.join("pliron-derive"),
-                )
-            }
-            PlironSource::Git { root, .. } => {
-                copy_tree(root, &dest.join("pliron-git"))?;
-                (
-                    root.clone(),
-                    root.join("pliron-derive"),
-                    dest.join("pliron-git"),
-                    dest.join("pliron-git/pliron-derive"),
-                )
-            }
-        };
-    let locate = |p: &str| -> (PathBuf, PathBuf) {
-        match p.strip_prefix("pliron-derive/") {
-            Some(rest) => (derive_src.join(rest), out_derive.join(rest)),
-            None => (pliron_src.join(p), out_pliron.join(p)),
-        }
+    // Sources and copies. Patch paths are relative to the pliron crate.
+    let (trees, pliron_src, derive_src, out_pliron, out_derive) = match &sel.pliron {
+        PlironSource::Registry {
+            pliron_dir,
+            derive_dir,
+            ..
+        } => (
+            vec![
+                (pliron_dir.clone(), dest.join("pliron")),
+                (derive_dir.clone(), dest.join("pliron-derive")),
+            ],
+            pliron_dir.clone(),
+            derive_dir.clone(),
+            dest.join("pliron"),
+            dest.join("pliron-derive"),
+        ),
+        PlironSource::Git { root, .. } => (
+            vec![(root.clone(), dest.join("pliron-git"))],
+            root.clone(),
+            root.join("pliron-derive"),
+            dest.join("pliron-git"),
+            dest.join("pliron-git/pliron-derive"),
+        ),
     };
-    let patched = crate::patcher::apply_in_memory(diff, |p| Ok(std::fs::read_to_string(locate(p).0).ok()))
-        .context("instrumenting pliron")?;
+
+    // The final content of every changed file, computed before writing
+    // anything: files whose content does not change keep their mtime, so
+    // regenerating a bundle does not make cargo rebuild pliron.
+    let mut files: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+    let patched = crate::patcher::apply_in_memory(diff, |p| {
+        Ok(std::fs::read_to_string(pliron_src.join(p)).ok())
+    })
+    .context("instrumenting pliron")?;
     for (p, text) in patched {
-        write_if_changed(&locate(&p).1, text.as_bytes())?;
+        files.insert(out_pliron.join(p), text.into_bytes());
+    }
+    instrument_derive(&derive_src.join("src"), &out_derive.join("src"), &mut files)?;
+    if matches!(sel.pliron, PlironSource::Registry { .. }) {
+        for (src, out) in [(&pliron_src, &out_pliron), (&derive_src, &out_derive)] {
+            let cleaned = clean_manifest(&std::fs::read_to_string(src.join("Cargo.toml"))?);
+            files.insert(out.join("Cargo.toml"), cleaned.into_bytes());
+        }
+    }
+    for (from, to) in &trees {
+        copy_tree(from, to, &files)?;
+    }
+    // Files the patch creates.
+    for (path, content) in &files {
+        write_if_changed(path, content)?;
     }
     Ok(())
 }
 
 /// Mirror a source tree (skipping `target/` and VCS directories), writing
-/// only files whose content changed.
-fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
+/// only files whose content changed; `replace` gives the content of some
+/// destination files.
+fn copy_tree(from: &Path, to: &Path, replace: &HashMap<PathBuf, Vec<u8>>) -> anyhow::Result<()> {
     for e in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
         let e = e?;
         let name = e.file_name();
@@ -594,9 +681,13 @@ fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
             if name == "target" || name == ".git" {
                 continue;
             }
-            copy_tree(&p, &to.join(&name))?;
+            copy_tree(&p, &to.join(&name), replace)?;
         } else if p.is_file() {
-            write_if_changed(&to.join(&name), &std::fs::read(&p)?)?;
+            let dest = to.join(&name);
+            match replace.get(&dest) {
+                Some(content) => write_if_changed(&dest, content)?,
+                None => write_if_changed(&dest, &std::fs::read(&p)?)?,
+            }
         }
     }
     Ok(())
@@ -699,7 +790,12 @@ pub fn build(
     let state = state_dir(meta);
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut child = Command::new(cargo)
-        .args(["build", "--bin", "pliron-lsp-engine-bundle", "--message-format=json"])
+        .args([
+            "build",
+            "--bin",
+            "pliron-lsp-engine-bundle",
+            "--message-format=json",
+        ])
         .arg("--manifest-path")
         .arg(bundle_dir.join("Cargo.toml"))
         // The project's directory decides the toolchain (rust-toolchain.toml)
@@ -815,8 +911,16 @@ pub fn describe(sel: &Selection) -> String {
             })
             .or_default() += 1;
     }
-    let hooks = if sel.api.is_some() { " (with pliron-lsp-api hooks)" } else { "" };
-    format!("{} dialect crate(s): {}{hooks}", names.len(), names.join(", "))
+    let hooks = if sel.api.is_some() {
+        " (with pliron-lsp-api hooks)"
+    } else {
+        ""
+    };
+    format!(
+        "{} dialect crate(s): {}{hooks}",
+        names.len(),
+        names.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -840,6 +944,7 @@ mod tests {
             pliron: PlironSource::Registry {
                 pliron_dir: "/p".into(),
                 derive_dir: "/d".into(),
+                derive_version: "0.18.0".into(),
             },
             patch_version: "0.18",
             dialects: vec![
@@ -882,7 +987,11 @@ mod tests {
         // Hooks: the engine uses the project's pliron-lsp-api in engine mode.
         let e = engine_manifest(&sel);
         let t: toml::Table = e.parse().unwrap();
-        assert_eq!(t["dependencies"]["pliron-lsp-api"]["path"].as_str(), Some("/w/api"), "{e}");
+        assert_eq!(
+            t["dependencies"]["pliron-lsp-api"]["path"].as_str(),
+            Some("/w/api"),
+            "{e}"
+        );
         assert_eq!(t["features"]["default"].as_array().unwrap().len(), 2, "{e}");
         assert!(!engine_manifest(&minimal_features(&sel)).contains("pliron-lsp-api"));
     }
@@ -892,10 +1001,30 @@ mod tests {
         let names: Vec<&str> = embedded::FILES.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"pliron-lsp-engine/src/lib.rs"));
         assert!(names.contains(&"pliron-lsp-protocol/src/lib.rs"));
-        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18"]);
+        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18", "0.19"]);
         for (_, p) in embedded::PATCHES {
             assert!(p.contains("+++ b/src/lsp.rs"));
         }
+    }
+
+    #[test]
+    fn derive_instrumentation_is_a_substitution() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("lib.rs"), "fn f() {}\n").unwrap();
+        std::fs::write(
+            src.join("sub/derive_format.rs"),
+            "quote! { ::pliron::combine::parser::char::string(#lit) }\n",
+        )
+        .unwrap();
+        let mut files = HashMap::new();
+        instrument_derive(&src, Path::new("/out/src"), &mut files).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[Path::new("/out/src/sub/derive_format.rs")],
+            b"quote! { ::pliron::lsp::keyword(#lit) }\n"
+        );
     }
 
     #[test]
@@ -914,10 +1043,18 @@ mod tests {
         };
         let m = manifest(&sel, "x = { path = \"/x\" }\n");
         assert!(m.contains("[patch.\"https://github.com/pliron-org/pliron.git\"]\npliron = { path = \"vendor/pliron-git\" }"), "{m}");
-        assert!(m.contains("[patch.crates-io]\nx = { path = \"/x\" }"), "{m}");
+        assert!(
+            m.contains("[patch.crates-io]\nx = { path = \"/x\" }"),
+            "{m}"
+        );
         assert!(m.parse::<toml::Table>().is_ok(), "{m}");
         let e = engine_manifest(&sel);
-        assert!(e.contains("pliron = { git = \"https://github.com/pliron-org/pliron.git\", rev = \"e23ff9f\" }"), "{e}");
+        assert!(
+            e.contains(
+                "pliron = { git = \"https://github.com/pliron-org/pliron.git\", rev = \"e23ff9f\" }"
+            ),
+            "{e}"
+        );
         assert!(e.contains("default = [\"pliron_0_17\"]"), "{e}");
         assert!(e.parse::<toml::Table>().is_ok(), "{e}");
     }

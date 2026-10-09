@@ -86,7 +86,10 @@ fn syntax_only_navigation() {
     // Go to definition of the `@callee` symbol.
     let def = c.request("textDocument/definition", at("@callee (z)", 0));
     assert_eq!(def["range"]["start"], pos("@callee:", 0, 0));
-    let syms = c.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": URI } }));
+    let syms = c.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": URI } }),
+    );
     assert_eq!(syms[0]["name"], "@m");
     assert_eq!(syms[0]["children"].as_array().unwrap().len(), 2);
 }
@@ -116,22 +119,45 @@ fn engine_exact_features() {
         .iter()
         .map(|h| format!("{}@{}", h["label"].as_str().unwrap(), h["position"]["line"]))
         .collect();
-    assert!(labels.contains(&format!(": builtin.integer i64@{}", pos("r = llvm.call", 0, 0)["line"])), "{labels:?}");
-    assert!(!labels.iter().any(|l| l.ends_with(&format!("@{}", pos("z = llvm.add", 0, 0)["line"]))), "{labels:?}");
+    assert!(
+        labels.contains(&format!(
+            ": builtin.integer i64@{}",
+            pos("r = llvm.call", 0, 0)["line"]
+        )),
+        "{labels:?}"
+    );
+    assert!(
+        !labels
+            .iter()
+            .any(|l| l.ends_with(&format!("@{}", pos("z = llvm.add", 0, 0)["line"]))),
+        "{labels:?}"
+    );
 
     // Extension views (rust-analyzer style).
     let doc = json!({ "textDocument": { "uri": URI } });
     let model = c.request("pliron/viewEngineModel", doc.clone());
     let model = model.as_str().unwrap();
-    assert!(model.contains("r: builtin.integer i64 = llvm.call (z)"), "{model}");
-    assert!(model.contains("^bb2(x2: builtin.integer i64, y2: builtin.integer i64)"), "{model}");
+    assert!(
+        model.contains("r: builtin.integer i64 = llvm.call (z)"),
+        "{model}"
+    );
+    assert!(
+        model.contains("^bb2(x2: builtin.integer i64, y2: builtin.integer i64)"),
+        "{model}"
+    );
     let tree = c.request("pliron/viewSyntaxTree", doc.clone());
-    assert!(tree.as_str().unwrap().contains("STMT builtin.module"), "{tree}");
+    assert!(
+        tree.as_str().unwrap().contains("STMT builtin.module"),
+        "{tree}"
+    );
     let status = c.request("pliron/analyzerStatus", doc.clone());
     let status = status.as_str().unwrap();
     assert!(status.contains("route: reference engine"), "{status}");
     assert!(status.contains("engine analysis: up to date"), "{status}");
-    assert_eq!(c.request("pliron/serverVersion", json!(null)), json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        c.request("pliron/serverVersion", json!(null)),
+        json!(env!("CARGO_PKG_VERSION"))
+    );
 
     // Op names: Rust docs from the dialect sources and go-to-definition into
     // Rust. `llvm.add` is defined by a `macro_rules!` macro in pliron-llvm.
@@ -143,11 +169,20 @@ fn engine_exact_features() {
             assert!(v.contains("AddOp"), "{v}");
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "no docs in hover: {v}");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no docs in hover: {v}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let def = c.request("textDocument/definition", at("llvm.add", 0));
-    assert!(def["uri"].as_str().unwrap().ends_with("pliron-llvm-0.18.0/src/ops.rs"), "{def}");
+    assert!(
+        def["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("pliron-llvm-0.18.0/src/ops.rs"),
+        "{def}"
+    );
 
     // Exact definition of `z` used by the call.
     let def = c.request("textDocument/definition", at("z) :", 0));
@@ -155,8 +190,16 @@ fn engine_exact_features() {
 
     // Semantic tokens: `if` in `llvm.cond_br if ...` is a keyword of the
     // hand-written llvm.cond_br parser.
-    let toks = c.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": URI } }));
-    let data: Vec<u64> = toks["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    let toks = c.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": URI } }),
+    );
+    let data: Vec<u64> = toks["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect();
     let (mut line, mut col) = (0u64, 0u64);
     let mut decoded = Vec::new();
     for t in data.chunks(5) {
@@ -171,7 +214,9 @@ fn engine_exact_features() {
     let if_pos = pos("if one", 0, 0);
     let if_tok = decoded
         .iter()
-        .find(|(l, c, _, _)| *l == if_pos["line"].as_u64().unwrap() && *c == if_pos["character"].as_u64().unwrap())
+        .find(|(l, c, _, _)| {
+            *l == if_pos["line"].as_u64().unwrap() && *c == if_pos["character"].as_u64().unwrap()
+        })
         .expect("token for `if`");
     assert_eq!(if_tok.3, 5, "keyword"); // legend index 5 = keyword
 
@@ -182,8 +227,14 @@ fn engine_exact_features() {
         .replace("llvm.return r", "llvm.return q");
     c.change_uri(URI, 2, &broken);
     let diags = c.wait_diagnostics(|d| !d.is_empty());
-    let msgs: Vec<&str> = diags.iter().map(|d| d["message"].as_str().unwrap()).collect();
-    assert!(msgs.iter().any(|m| m.contains("Unregistered Op llvm.ad")), "{msgs:#?}");
+    let msgs: Vec<&str> = diags
+        .iter()
+        .map(|d| d["message"].as_str().unwrap())
+        .collect();
+    assert!(
+        msgs.iter().any(|m| m.contains("Unregistered Op llvm.ad")),
+        "{msgs:#?}"
+    );
     assert!(msgs.iter().any(|m| m.contains("q")), "{msgs:#?}");
 }
 
@@ -212,7 +263,10 @@ fn editor_features() {
         std::thread::sleep(std::time::Duration::from_millis(200));
     };
     let label = sig["signatures"][0]["label"].as_str().unwrap();
-    assert!(label.starts_with("llvm.icmp ") && label.contains("<predicate>"), "{label}");
+    assert!(
+        label.starts_with("llvm.icmp ") && label.contains("<predicate>"),
+        "{label}"
+    );
     assert_eq!(sig["activeParameter"], 2, "{sig}");
 
     // Completion offers ops with a snippet of their syntax.
@@ -230,7 +284,13 @@ fn editor_features() {
 
     // Workspace symbols and call hierarchy.
     let syms = c.request("workspace/symbol", json!({ "query": "cal" }));
-    assert!(syms.as_array().unwrap().iter().any(|s| s["name"] == "@callee"), "{syms}");
+    assert!(
+        syms.as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "@callee"),
+        "{syms}"
+    );
     let items = c.request("textDocument/prepareCallHierarchy", at("@callee:", 0));
     let item = items[0].clone();
     assert_eq!(item["name"], "@callee");
@@ -241,7 +301,9 @@ fn editor_features() {
     assert_eq!(outgoing[0]["to"]["name"], "@callee", "{outgoing}");
 
     // Formatting re-indents a messy document.
-    let messy = DEMO.replace("    z = llvm.add", "z = llvm.add").replace("  llvm.func @f", "llvm.func @f");
+    let messy = DEMO
+        .replace("    z = llvm.add", "z = llvm.add")
+        .replace("  llvm.func @f", "llvm.func @f");
     let uri2 = "file:///tmp/messy.pliron";
     c.open_uri(uri2, &messy);
     let edits = c.request(
@@ -255,7 +317,12 @@ fn editor_features() {
     let diags = c.wait_diagnostics(|d| !d.is_empty());
     let d = diags
         .iter()
-        .find(|d| d["message"].as_str().unwrap().contains("Unregistered Op llvm.ad"))
+        .find(|d| {
+            d["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unregistered Op llvm.ad")
+        })
         .unwrap()
         .clone();
     // The diagnostic points at the misspelled name itself.
@@ -264,7 +331,12 @@ fn editor_features() {
         "textDocument/codeAction",
         json!({ "textDocument": { "uri": URI }, "range": d["range"], "context": { "diagnostics": [d] } }),
     );
-    let titles: Vec<&str> = actions.as_array().unwrap().iter().map(|a| a["title"].as_str().unwrap()).collect();
+    let titles: Vec<&str> = actions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["title"].as_str().unwrap())
+        .collect();
     assert_eq!(titles.first(), Some(&"Change to `llvm.add`"), "{titles:?}");
 }
 
@@ -285,7 +357,12 @@ fn workspace_rename_lenses_and_links() {
         "textDocument/references",
         json!({ "textDocument": { "uri": URI }, "position": pos("@callee:", 0, 1), "context": { "includeDeclaration": true } }),
     );
-    let uris: Vec<&str> = refs.as_array().unwrap().iter().map(|l| l["uri"].as_str().unwrap()).collect();
+    let uris: Vec<&str> = refs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap())
+        .collect();
     assert_eq!(uris.iter().filter(|u| **u == URI).count(), 2, "{refs:#}");
     assert_eq!(uris.iter().filter(|u| **u == B_URI).count(), 1, "{refs:#}");
 
@@ -296,9 +373,23 @@ fn workspace_rename_lenses_and_links() {
         "textDocument/rename",
         json!({ "textDocument": { "uri": B_URI }, "position": b_pos, "newName": "target" }),
     );
-    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 2, "{edit:#}");
-    assert_eq!(edit["changes"][B_URI].as_array().unwrap().len(), 1, "{edit:#}");
-    assert!(edit["changes"][URI].as_array().unwrap().iter().all(|e| e["newText"] == "target"));
+    assert_eq!(
+        edit["changes"][URI].as_array().unwrap().len(),
+        2,
+        "{edit:#}"
+    );
+    assert_eq!(
+        edit["changes"][B_URI].as_array().unwrap().len(),
+        1,
+        "{edit:#}"
+    );
+    assert!(
+        edit["changes"][URI]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["newText"] == "target")
+    );
     // `@f` already exists next to it.
     let err = c
         .try_request(
@@ -309,22 +400,47 @@ fn workspace_rename_lenses_and_links() {
     assert!(err.contains("already defined in demo.pliron"), "{err}");
 
     // "N references" above functions (not above the module).
-    let lenses = c.request("textDocument/codeLens", json!({ "textDocument": { "uri": URI } }));
-    let titles: Vec<&str> = lenses.as_array().unwrap().iter().map(|l| l["command"]["title"].as_str().unwrap()).collect();
+    let lenses = c.request(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": URI } }),
+    );
+    let titles: Vec<&str> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["command"]["title"].as_str().unwrap())
+        .collect();
     assert_eq!(titles, ["2 references", "0 references"], "{lenses:#}");
     assert_eq!(lenses[0]["command"]["command"], "pliron.showReferences");
-    assert_eq!(lenses[0]["command"]["arguments"][2].as_array().unwrap().len(), 2);
+    assert_eq!(
+        lenses[0]["command"]["arguments"][2]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 
     // Local names: `z` (3 occurrences); `y2` is taken in the same function,
     // `a` is not (it lives in @callee, another isolated scope).
     let edit = c.request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("z = llvm", 0, 0), "newName": "sum" }));
-    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 3, "{edit:#}");
+    assert_eq!(
+        edit["changes"][URI].as_array().unwrap().len(),
+        3,
+        "{edit:#}"
+    );
     let err = c
         .try_request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("z = llvm", 0, 0), "newName": "y2" }))
         .unwrap_err();
-    assert!(err.contains("already names another value in this scope (line 19)"), "{err}");
+    assert!(
+        err.contains("already names another value in this scope (line 19)"),
+        "{err}"
+    );
     let edit = c.request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("x: builtin", 0, 0), "newName": "a" }));
-    assert_eq!(edit["changes"][URI].as_array().unwrap().len(), 4, "{edit:#}");
+    assert_eq!(
+        edit["changes"][URI].as_array().unwrap().len(),
+        4,
+        "{edit:#}"
+    );
     // Block labels clash within their region.
     let err = c
         .try_request("textDocument/rename", json!({ "textDocument": { "uri": URI }, "position": pos("^bb0(x0", 0, 1), "newName": "bb1" }))
@@ -335,17 +451,29 @@ fn workspace_rename_lenses_and_links() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::create_dir_all(dir.path().join("out")).unwrap();
-    std::fs::write(dir.path().join("src/kernel.rs"), "fn main() {\n    let x = 1;\n}\n").unwrap();
-    let ir_uri = lsp_types::Url::from_file_path(dir.path().join("out/k.pliron")).unwrap().to_string();
+    std::fs::write(
+        dir.path().join("src/kernel.rs"),
+        "fn main() {\n    let x = 1;\n}\n",
+    )
+    .unwrap();
+    let ir_uri = lsp_types::Url::from_file_path(dir.path().join("out/k.pliron"))
+        .unwrap()
+        .to_string();
     let ir = "builtin.module @k {\n  ^entry():\n}\n\noutlined_attributes:\n!0 = @[\"src/kernel.rs\": line: 2, column: 5], []\n";
     c.open_uri(&ir_uri, ir);
-    let links = c.request("textDocument/documentLink", json!({ "textDocument": { "uri": ir_uri } }));
+    let links = c.request(
+        "textDocument/documentLink",
+        json!({ "textDocument": { "uri": ir_uri } }),
+    );
     let target = links[0]["target"].as_str().unwrap();
     assert!(target.ends_with("src/kernel.rs#L2,5"), "{links:#}");
     let def = c.request(
         "textDocument/definition",
         json!({ "textDocument": { "uri": ir_uri }, "position": { "line": 5, "character": 12 } }),
     );
-    assert!(def["uri"].as_str().unwrap().ends_with("src/kernel.rs"), "{def:#}");
+    assert!(
+        def["uri"].as_str().unwrap().ends_with("src/kernel.rs"),
+        "{def:#}"
+    );
     assert_eq!(def["range"]["start"], json!({ "line": 1, "character": 4 }));
 }

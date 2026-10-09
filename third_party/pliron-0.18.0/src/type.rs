@@ -40,13 +40,13 @@
 
 use crate::{
     arg_err_noloc,
-    combine::{Parser, parser, parser::char::spaces},
+    combine::{Parser, parser},
     common_traits::Verify,
     context::{Context, collect_deduped_interface_verifiers},
     dialect::{Dialect, DialectName},
     identifier::Identifier,
     impl_printable_for_display, input_err,
-
+    irfmt::parsers::spaced,
     location::Located,
     parsable::{IntoParseResult, Parsable, ParseResult, StateStream},
     printable::{self, Printable},
@@ -387,13 +387,11 @@ impl Parsable for TypeHandle {
         _arg: Self::Arg,
     ) -> ParseResult<'a, Self::Parsed> {
         let loc = state_stream.loc();
-        let type_id_parser = spaces()
-            .with((
-                crate::lsp::position(),
-                TypeId::parser(()),
-                crate::lsp::position(),
-            ))
-            .skip(spaces());
+        let type_id_parser = spaced((
+            crate::lsp::position(),
+            TypeId::parser(()),
+            crate::lsp::position(),
+        ));
 
         let mut type_parser = type_id_parser.then(move |(start, type_id, id_end): (_, TypeId, _)| {
             // This clone is to satify the borrow checker.
@@ -530,13 +528,11 @@ impl<T: Type + Parsable<Arg = (), Parsed = TypedHandle<T>>> Parsable for TypedHa
         arg: Self::Arg,
     ) -> ParseResult<'a, Self::Parsed> {
         let loc = state_stream.loc();
-        spaces()
-            .with((
-                crate::lsp::position(),
-                TypeId::parser(()),
-                crate::lsp::position(),
-            ))
-            .skip(spaces())
+        spaced((
+            crate::lsp::position(),
+            TypeId::parser(()),
+            crate::lsp::position(),
+        ))
             .then(move |(start, type_id, id_end): (_, TypeId, _)| {
                 let loc = loc.clone();
                 combine::parser(move |parsable_state: &mut StateStream<'a>| {

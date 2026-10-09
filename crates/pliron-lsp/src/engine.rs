@@ -23,8 +23,15 @@ use pliron_lsp_protocol::{
 /// Messages from engine I/O threads to the main loop.
 #[derive(Debug)]
 pub enum EngineEvent {
-    Response { key: String, generation: u64, response: Box<Response> },
-    Exited { key: String, generation: u64 },
+    Response {
+        key: String,
+        generation: u64,
+        response: Box<Response>,
+    },
+    Exited {
+        key: String,
+        generation: u64,
+    },
 }
 
 impl EngineEvent {
@@ -40,10 +47,16 @@ impl EngineEvent {
 #[derive(Debug)]
 pub enum Finished {
     Hello(EngineInfo),
-    Analysis { uri: Url, result: AnalyzeResult },
+    Analysis {
+        uri: Url,
+        result: AnalyzeResult,
+    },
     Probe(ProbeParams),
     /// The engine died or timed out while analyzing `uri`.
-    Failed { uri: Option<Url>, message: String },
+    Failed {
+        uri: Option<Url>,
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -310,10 +323,9 @@ impl Engine {
                         }
                     }
                     ResponseBody::Probe(p) => out.push(Finished::Probe(p)),
-                    ResponseBody::Error { message } => out.push(Finished::Failed {
-                        uri: None,
-                        message,
-                    }),
+                    ResponseBody::Error { message } => {
+                        out.push(Finished::Failed { uri: None, message })
+                    }
                     ResponseBody::Shutdown => {}
                 }
             }

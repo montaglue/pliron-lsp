@@ -38,7 +38,11 @@ pub fn suggestions<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>
         .collect();
     scored.sort();
     scored.dedup_by(|a, b| a.1 == b.1);
-    scored.into_iter().take(3).map(|(_, c)| c.to_string()).collect()
+    scored
+        .into_iter()
+        .take(3)
+        .map(|(_, c)| c.to_string())
+        .collect()
 }
 
 /// `Unregistered <kind> <name>` in a pliron error message.
@@ -67,7 +71,13 @@ fn undefined_name(message: &str) -> Option<(bool, &str)> {
     None
 }
 
-fn fix(uri: &Url, title: String, diag: &Diagnostic, edits: Vec<TextEdit>, preferred: bool) -> CodeActionOrCommand {
+fn fix(
+    uri: &Url,
+    title: String,
+    diag: &Diagnostic,
+    edits: Vec<TextEdit>,
+    preferred: bool,
+) -> CodeActionOrCommand {
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
     CodeActionOrCommand::CodeAction(CodeAction {
@@ -209,7 +219,9 @@ pub fn code_actions(
             ));
             continue;
         }
-        if msg.starts_with("expected an operation after `;`") || msg.contains("after the last operation") {
+        if msg.starts_with("expected an operation after `;`")
+            || msg.contains("after the last operation")
+        {
             let semi = if doc.slice((start, end)) == ";" {
                 Some(start)
             } else {
@@ -271,19 +283,28 @@ mod tests {
     fn distances_and_suggestions() {
         assert_eq!(edit_distance("llvm.ad", "llvm.add"), 1);
         assert_eq!(edit_distance("", "abc"), 3);
-        let s = suggestions("llvm.ad", ["llvm.add", "llvm.and", "llvm.sub", "builtin.module"]);
+        let s = suggestions(
+            "llvm.ad",
+            ["llvm.add", "llvm.and", "llvm.sub", "builtin.module"],
+        );
         assert_eq!(s, ["llvm.add", "llvm.and"]);
         assert!(suggestions("zzzzzz", ["llvm.add"]).is_empty());
     }
 
     #[test]
     fn parse_messages() {
-        assert_eq!(unregistered("Unregistered Op llvm.ad"), Some(("Op", "llvm.ad")));
+        assert_eq!(
+            unregistered("Unregistered Op llvm.ad"),
+            Some(("Op", "llvm.ad"))
+        );
         assert_eq!(
             unregistered("blah\nUnregistered type foo.bar\nmore"),
             Some(("type", "foo.bar"))
         );
-        assert_eq!(undefined_name("Value w2 is not defined in this scope"), Some((false, "w2")));
+        assert_eq!(
+            undefined_name("Value w2 is not defined in this scope"),
+            Some((false, "w2"))
+        );
         assert_eq!(
             undefined_name("Block label ^bb9 is not defined in this region"),
             Some((true, "bb9"))

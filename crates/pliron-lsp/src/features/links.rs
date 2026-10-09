@@ -115,8 +115,14 @@ mod tests {
         let doc = Document::new(text.into(), 0, &Default::default());
         let locs = source_locations(&doc);
         assert_eq!(locs.len(), 2, "{locs:#?}");
-        assert_eq!((locs[0].path.as_str(), locs[0].line, locs[0].column), ("src/a.rs", 12, 5));
-        assert_eq!(doc.slice(locs[0].range), "\"src/a.rs\": line: 12, column: 5");
+        assert_eq!(
+            (locs[0].path.as_str(), locs[0].line, locs[0].column),
+            ("src/a.rs", 12, 5)
+        );
+        assert_eq!(
+            doc.slice(locs[0].range),
+            "\"src/a.rs\": line: 12, column: 5"
+        );
         assert_eq!(locs[1].path, "/abs/b.rs");
         assert!(location_at(&doc, text.find("line: 12").unwrap() as u32).is_some());
     }
@@ -128,7 +134,10 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("target/out")).unwrap();
         std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
         let ir = dir.path().join("target/out/k.pliron");
-        assert_eq!(resolve("src/a.rs", Some(&ir), &[]), Some(dir.path().join("src/a.rs")));
+        assert_eq!(
+            resolve("src/a.rs", Some(&ir), &[]),
+            Some(dir.path().join("src/a.rs"))
+        );
         assert_eq!(resolve("src/missing.rs", Some(&ir), &[]), None);
         assert_eq!(resolve("<in-memory>", Some(&ir), &[]), None);
     }

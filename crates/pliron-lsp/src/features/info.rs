@@ -120,7 +120,10 @@ pub fn hover(
             parts.push(super::entry_docs(e));
         }
         if !parts.is_empty() {
-            return Some(markdown(Some(doc.range(range, enc)), parts.join("\n\n---\n\n")));
+            return Some(markdown(
+                Some(doc.range(range, enc)),
+                parts.join("\n\n---\n\n"),
+            ));
         }
     }
     if let Some(x) = doc.fresh_exact() {
@@ -134,7 +137,11 @@ pub fn hover(
                     let name = doc.slice((sp.start, sp.end));
                     return Some(markdown(
                         range,
-                        format!("{}\n\n{}", code(&format!("{name}: {}", v.ty)), value_origin(x, *value)),
+                        format!(
+                            "{}\n\n{}",
+                            code(&format!("{name}: {}", v.ty)),
+                            value_origin(x, *value)
+                        ),
                     ));
                 }
                 SpanKind::BlockLabel { block } | SpanKind::SuccessorUse { block } => {
@@ -182,7 +189,10 @@ pub fn hover(
             if let Some(d) = x.symbol_def_by_name(&name) {
                 return Some(markdown(None, op_hover(x, d.op)));
             }
-            return Some(markdown(None, format!("`@{name}`: symbol not defined in this document")));
+            return Some(markdown(
+                None,
+                format!("`@{name}`: symbol not defined in this document"),
+            ));
         }
         if let Some(op) = x.op_at(off) {
             let _ = op;
@@ -220,10 +230,16 @@ fn syntax_hover(doc: &Document, off: Offset, enc: Encoding) -> Option<Hover> {
             });
             Some(markdown(
                 range,
-                format!("{}\n\n{what}{note}", code(&format!("{}{}", t.text(&doc.text), ty.unwrap_or_default()))),
+                format!(
+                    "{}\n\n{what}{note}",
+                    code(&format!("{}{}", t.text(&doc.text), ty.unwrap_or_default()))
+                ),
             ))
         }
-        Role::OpName => Some(markdown(range, format!("{}\n\noperation{note}", code(t.text(&doc.text))))),
+        Role::OpName => Some(markdown(
+            range,
+            format!("{}\n\noperation{note}", code(t.text(&doc.text))),
+        )),
         _ => None,
     }
 }

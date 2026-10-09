@@ -614,39 +614,81 @@ mod tests {
             .spans
             .iter()
             .filter_map(|s| match &s.kind {
-                SpanKind::Op { name_start, name_end, .. } => Some(text_at(
+                SpanKind::Op {
+                    name_start,
+                    name_end,
+                    ..
+                } => Some(text_at(
                     DEMO,
-                    &Span { start: *name_start, end: *name_end, kind: SpanKind::Keyword },
+                    &Span {
+                        start: *name_start,
+                        end: *name_end,
+                        kind: SpanKind::Keyword,
+                    },
                 )),
                 _ => None,
             })
             .collect();
         assert!(names.contains(&"llvm.call".to_string()), "{names:?}");
         // Types and keywords are recorded.
-        assert!(r.spans.iter().any(|s| matches!(&s.kind, SpanKind::Type { text, .. } if text == "builtin.integer i64")));
-        assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::BlockLabel { .. }) && text_at(DEMO, s) == "^bb2"));
-        assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::SuccessorUse { .. }) && text_at(DEMO, s) == "^bb2"));
+        assert!(r.spans.iter().any(
+            |s| matches!(&s.kind, SpanKind::Type { text, .. } if text == "builtin.integer i64")
+        ));
+        assert!(
+            r.spans.iter().any(
+                |s| matches!(s.kind, SpanKind::BlockLabel { .. }) && text_at(DEMO, s) == "^bb2"
+            )
+        );
+        assert!(
+            r.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::SuccessorUse { .. })
+                    && text_at(DEMO, s) == "^bb2")
+        );
         assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::BlockArgDef { .. }) && text_at(DEMO, s) == "x2"));
-        assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::ResultDef { .. }) && text_at(DEMO, s) == "z"));
-        assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::Keyword) && text_at(DEMO, s) == ":"));
+        assert!(
+            r.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::ResultDef { .. }) && text_at(DEMO, s) == "z")
+        );
+        assert!(
+            r.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Keyword) && text_at(DEMO, s) == ":")
+        );
     }
 
     #[test]
     fn recovers_and_reports_multiple_errors() {
         // A typo in the first op of @f and an undefined name further down.
         let text = DEMO
-            .replace("y = builtin.constant <builtin.integer <1: i64>>", "y = builtin.constnt <builtin.integer <1: i64>>")
+            .replace(
+                "y = builtin.constant <builtin.integer <1: i64>>",
+                "y = builtin.constnt <builtin.integer <1: i64>>",
+            )
             .replace("z = llvm.add x2, y2", "z = llvm.add x2, w2");
         let r = run(&text);
-        let msgs: Vec<String> = r.parse_errors.iter().map(|e| format!("{:?} {}", e.pos, e.message)).collect();
-        assert!(msgs.iter().any(|m| m.contains("Unregistered Op builtin.constnt")), "{msgs:#?}");
+        let msgs: Vec<String> = r
+            .parse_errors
+            .iter()
+            .map(|e| format!("{:?} {}", e.pos, e.message))
+            .collect();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("Unregistered Op builtin.constnt")),
+            "{msgs:#?}"
+        );
         assert!(msgs.iter().any(|m| m.contains("w2")), "{msgs:#?}");
         // `y` is a placeholder from the failed op: no cascading error.
         assert!(!msgs.iter().any(|m| m.contains("Value y ")), "{msgs:#?}");
         // The rest of the function is still parsed.
         let m = r.model.unwrap();
         assert!(m.ops.iter().any(|o| o.opid == "llvm.call"));
-        assert!(r.spans.iter().any(|s| matches!(s.kind, SpanKind::OperandUse { .. }) && text_at(&text, s) == "z"));
+        assert!(
+            r.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::OperandUse { .. }) && text_at(&text, s) == "z")
+        );
     }
 
     #[test]
@@ -661,8 +703,16 @@ mod tests {
             max_attr_len: 200,
         });
         assert!(r.parse_errors.is_empty(), "{:?}", r.parse_errors);
-        let lines: Vec<u32> = r.verify_errors.iter().filter_map(|d| d.pos.map(|p| p.line)).collect();
-        assert!(lines.contains(&4) && lines.contains(&8), "{:#?}", r.verify_errors);
+        let lines: Vec<u32> = r
+            .verify_errors
+            .iter()
+            .filter_map(|d| d.pos.map(|p| p.line))
+            .collect();
+        assert!(
+            lines.contains(&4) && lines.contains(&8),
+            "{:#?}",
+            r.verify_errors
+        );
         // pliron's own verify_operation stops at the first.
         let first = run(text);
         assert_eq!(first.verify_errors.len(), 1);
@@ -707,7 +757,11 @@ mod tests {
 
         #[test]
         fn hooks_run() {
-            assert!(crate::hooks::names().iter().any(|n| n.ends_with("unused_constants")));
+            assert!(
+                crate::hooks::names()
+                    .iter()
+                    .any(|n| n.ends_with("unused_constants"))
+            );
             let text = DEMO.replace(
                 "    llvm.return r\n  }\n}",
                 "    k = builtin.constant <builtin.integer <7: i64>> : builtin.integer i64;\n    llvm.return r\n  }\n}",
@@ -719,9 +773,16 @@ mod tests {
                 want_model: true,
                 max_attr_len: 200,
             });
-            assert!(r.parse_errors.is_empty() && r.verify_errors.is_empty(), "{r:#?}");
+            assert!(
+                r.parse_errors.is_empty() && r.verify_errors.is_empty(),
+                "{r:#?}"
+            );
             let m = r.model.as_ref().unwrap();
-            let unused: Vec<_> = r.hook_diags.iter().filter(|d| d.message == "unused constant").collect();
+            let unused: Vec<_> = r
+                .hook_diags
+                .iter()
+                .filter(|d| d.message == "unused constant")
+                .collect();
             // `one` is used by cond_br, `y` by the branch; only `k` is unused.
             assert_eq!(unused.len(), 1, "{:#?}", r.hook_diags);
             assert_eq!(unused[0].severity, HookSeverity::Warning);
@@ -730,9 +791,24 @@ mod tests {
             assert_eq!(m.values[k as usize].given_name.as_deref(), Some("k"));
             assert!(unused[0].source.ends_with("unused_constants"));
             // A panicking hook is reported, not fatal.
-            assert!(r.hook_diags.iter().any(|d| d.message.contains("panicked: boom")), "{:#?}", r.hook_diags);
-            assert!(m.ops.iter().filter(|o| o.opid == "llvm.func").all(|o| o.notes == ["an LLVM function"]));
-            assert!(r.hook_hints.iter().any(|h| h.label == "lhs:" && h.target == HookTarget::Operand { index: 0 }));
+            assert!(
+                r.hook_diags
+                    .iter()
+                    .any(|d| d.message.contains("panicked: boom")),
+                "{:#?}",
+                r.hook_diags
+            );
+            assert!(
+                m.ops
+                    .iter()
+                    .filter(|o| o.opid == "llvm.func")
+                    .all(|o| o.notes == ["an LLVM function"])
+            );
+            assert!(
+                r.hook_hints
+                    .iter()
+                    .any(|h| h.label == "lhs:" && h.target == HookTarget::Operand { index: 0 })
+            );
         }
     }
 

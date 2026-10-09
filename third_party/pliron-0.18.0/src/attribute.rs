@@ -41,7 +41,7 @@
 
 use crate::{
     builtin::attr_interfaces::{OutlinedAttr, TypedAttrInterface},
-    combine::{Parser, parser, parser::char::spaces, token},
+    combine::{Parser, parser, token},
     common_traits::Verify,
     context::{Context, collect_deduped_interface_verifiers},
     dialect::{Dialect, DialectName},
@@ -383,13 +383,11 @@ impl Parsable for AttrObj {
         _arg: Self::Arg,
     ) -> ParseResult<'a, Self::Parsed> {
         let loc = state_stream.loc();
-        let attr_id_parser = spaces()
-            .with((
-                crate::lsp::position(),
-                AttrId::parser(()),
-                crate::lsp::position(),
-            ))
-            .skip(spaces());
+        let attr_id_parser = spaced((
+            crate::lsp::position(),
+            AttrId::parser(()),
+            crate::lsp::position(),
+        ));
 
         let mut attr_parser = attr_id_parser.then(move |(start, attr_id, id_end): (_, AttrId, _)| {
             let loc = loc.clone();

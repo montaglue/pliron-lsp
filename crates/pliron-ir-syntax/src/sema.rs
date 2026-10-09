@@ -471,7 +471,15 @@ impl<'a> Resolver<'a> {
                     end: self.a.tree.tok(e).end,
                     provenance: Provenance::Exact,
                 });
-                self.value_def(DefKind::BlockArg, arg.name, None, Some(bid), i as u32, scope, ty);
+                self.value_def(
+                    DefKind::BlockArg,
+                    arg.name,
+                    None,
+                    Some(bid),
+                    i as u32,
+                    scope,
+                    ty,
+                );
             }
         }
 
@@ -555,12 +563,14 @@ impl<'a> Resolver<'a> {
         for (k, &t) in s.body.iter().enumerate() {
             if s.body_depth[k] == 0
                 && toks[t as usize].is_punct(':')
-                && s.body.get(k + 1).is_some_and(|n| toks[*n as usize].is_punct('<'))
+                && s.body
+                    .get(k + 1)
+                    .is_some_and(|n| toks[*n as usize].is_punct('<'))
                 && let Some(tys) = self.canonical_result_types(&s.body[k + 1..])
-                    && tys.len() == n
-                {
-                    return tys.into_iter().map(Some).collect();
-                }
+                && tys.len() == n
+            {
+                return tys.into_iter().map(Some).collect();
+            }
         }
         if n != 1 {
             return vec![None; n];
@@ -620,7 +630,10 @@ impl<'a> Resolver<'a> {
             .iter()
             .position(|t| toks[*t as usize].kind == TokenKind::Arrow)?;
         let rest = &toks_idx[arrow + 1..];
-        if !rest.first().is_some_and(|t| toks[*t as usize].is_punct('(')) {
+        if !rest
+            .first()
+            .is_some_and(|t| toks[*t as usize].is_punct('('))
+        {
             return None;
         }
         let mut out = Vec::new();
@@ -939,7 +952,8 @@ mod tests {
     }
 
     fn def_name(a: &Analysis, tok: TokIdx) -> Option<(DefKind, String)> {
-        a.def_of_token(tok).map(|d| (a.def(d).kind, a.def(d).name.clone()))
+        a.def_of_token(tok)
+            .map(|d| (a.def(d).kind, a.def(d).name.clone()))
     }
 
     #[test]
@@ -959,7 +973,10 @@ mod tests {
         assert_eq!(def_name(&a, bb2), Some((DefKind::Label, "bb2".into())));
         // Symbols: `@callee` in the call resolves to the func def.
         let callee_use = tok_at(&a, DEMO, "@callee (z)", 0);
-        assert_eq!(def_name(&a, callee_use), Some((DefKind::Symbol, "callee".into())));
+        assert_eq!(
+            def_name(&a, callee_use),
+            Some((DefKind::Symbol, "callee".into()))
+        );
         let callee_def = tok_at(&a, DEMO, "@callee:", 0);
         assert!(matches!(a.role(callee_def), Role::Def(_)));
         // `nsw` is an attribute key, `false` is a plain word.
@@ -984,14 +1001,22 @@ mod tests {
         );
         let a = analyze(src, &k);
         let def = |name: &str| {
-            DefId(a.defs.iter().position(|d| d.name == name && d.kind != DefKind::Symbol).unwrap() as u32)
+            DefId(
+                a.defs
+                    .iter()
+                    .position(|d| d.name == name && d.kind != DefKind::Symbol)
+                    .unwrap() as u32,
+            )
         };
         // `x` and `y` share @a's scope; `z` lives in @b's.
         assert!(a.conflicting_def(def("x"), "y").is_some());
         assert!(a.conflicting_def(def("x"), "z").is_none());
         assert!(a.conflicting_def(def("x"), "w").is_none());
         // Labels clash within a region only: both functions have `^b`.
-        let labels: Vec<DefId> = a.defs_of_kind(DefKind::Label).filter(|d| a.def(*d).name == "b").collect();
+        let labels: Vec<DefId> = a
+            .defs_of_kind(DefKind::Label)
+            .filter(|d| a.def(*d).name == "b")
+            .collect();
         assert_eq!(labels.len(), 2);
         assert!(a.conflicting_def(labels[0], "e").is_none());
     }
@@ -1023,7 +1048,10 @@ mod tests {
         let a = analyze(DEMO, &Knowledge::default());
         let z = a.def_of_token(tok_at(&a, DEMO, "z =", 0)).unwrap();
         let ty = a.def(z).ty.unwrap();
-        assert_eq!(&DEMO[ty.start as usize..ty.end as usize], "builtin.integer i64");
+        assert_eq!(
+            &DEMO[ty.start as usize..ty.end as usize],
+            "builtin.integer i64"
+        );
         assert_eq!(ty.provenance, Provenance::Heuristic);
         // The call's trailing type is a function type: no guess.
         let r = a.def_of_token(tok_at(&a, DEMO, "r =", 0)).unwrap();
@@ -1035,11 +1063,15 @@ mod tests {
 
     #[test]
     fn canonical_form_types() {
-        let src = "v0, v1 = test.dual_def () [] []: <() -> (builtin.integer si64, builtin.integer si32)>";
+        let src =
+            "v0, v1 = test.dual_def () [] []: <() -> (builtin.integer si64, builtin.integer si32)>";
         let a = analyze(src, &Knowledge::default());
         let v1 = a.def_of_token(tok_at(&a, src, "v1", 0)).unwrap();
         let ty = a.def(v1).ty.unwrap();
-        assert_eq!(&src[ty.start as usize..ty.end as usize], "builtin.integer si32");
+        assert_eq!(
+            &src[ty.start as usize..ty.end as usize],
+            "builtin.integer si32"
+        );
         assert_eq!(ty.provenance, Provenance::Exact);
     }
 
@@ -1048,7 +1080,10 @@ mod tests {
         let src = "builtin.module @m {\n^e():\n  x = t.a (q, r) [] []: <(i, i) -> (i)>;\n  t.br ^nowhere(x)\n}";
         let a = analyze(src, &Knowledge::default());
         let msgs: Vec<_> = a.diagnostics.iter().map(|d| d.message.clone()).collect();
-        assert!(msgs.iter().any(|m| m.contains("undefined value `q`")), "{msgs:?}");
+        assert!(
+            msgs.iter().any(|m| m.contains("undefined value `q`")),
+            "{msgs:?}"
+        );
         assert!(msgs.iter().any(|m| m.contains("^nowhere")), "{msgs:?}");
     }
 

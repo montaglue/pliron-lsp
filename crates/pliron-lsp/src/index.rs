@@ -121,7 +121,9 @@ impl DialectIndex {
         let mut entries = self.derived.clone();
         for h in &self.hints {
             let matching: Vec<usize> = (0..entries.len())
-                .filter(|i| entries[*i].name == h.name && h.kind.is_none_or(|k| entries[*i].kind == k))
+                .filter(|i| {
+                    entries[*i].name == h.name && h.kind.is_none_or(|k| entries[*i].kind == k)
+                })
                 .collect();
             let targets = if matching.is_empty() {
                 // Not found in the sources (e.g. defined by an unusual
@@ -182,7 +184,10 @@ impl DialectIndex {
             let has = |iface: &str| {
                 e.interfaces
                     .as_deref()
-                    .is_some_and(|i| i.split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == iface))
+                    .is_some_and(|i| {
+                        i.split(|c: char| !c.is_alphanumeric() && c != '_')
+                            .any(|w| w == iface)
+                    })
                     .then_some(true)
             };
             let mut keywords = e.keywords.clone();
@@ -264,7 +269,9 @@ fn is_qualname(s: &str) -> bool {
 }
 
 fn lit_str(t: &TokenTree) -> Option<String> {
-    let TokenTree::Literal(l) = t else { return None };
+    let TokenTree::Literal(l) = t else {
+        return None;
+    };
     syn::parse_str::<syn::LitStr>(&l.to_string())
         .ok()
         .map(|s| s.value())
@@ -282,9 +289,7 @@ fn key_values(tokens: TokenStream) -> Vec<(String, Vec<TokenTree>)> {
         {
             let mut j = i + 2;
             let mut value = Vec::new();
-            while j < toks.len()
-                && !matches!(&toks[j], TokenTree::Punct(p) if p.as_char() == ',')
-            {
+            while j < toks.len() && !matches!(&toks[j], TokenTree::Punct(p) if p.as_char() == ',') {
                 value.push(toks[j].clone());
                 j += 1;
             }
@@ -352,7 +357,9 @@ impl Scanner<'_> {
         let mut interfaces = None;
         let mut operands = Vec::new();
         for a in attrs {
-            let Some(last) = a.path().segments.last() else { continue };
+            let Some(last) = a.path().segments.last() else {
+                continue;
+            };
             let attr_name = last.ident.to_string();
             let tokens = match &a.meta {
                 syn::Meta::List(l) => l.tokens.clone(),
@@ -533,7 +540,12 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         if i.ident.is_some() {
             return;
         }
-        if i.mac.path.segments.last().is_some_and(|s| s.ident == "hints") {
+        if i.mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "hints")
+        {
             self.hints_block(i.mac.tokens.clone());
         } else {
             self.macro_invocation(i.mac.tokens.clone());
@@ -570,7 +582,9 @@ impl Scanner<'_> {
             };
             for (key, value) in colon_values(body.stream()) {
                 let strings = || match value.first() {
-                    Some(TokenTree::Group(g)) => g.stream().into_iter().filter_map(|t| lit_str(&t)).collect(),
+                    Some(TokenTree::Group(g)) => {
+                        g.stream().into_iter().filter_map(|t| lit_str(&t)).collect()
+                    }
                     _ => Vec::new(),
                 };
                 let boolean = || match value.first() {
@@ -678,7 +692,12 @@ pub struct ReadBuiltinOp;
         assert_eq!(add.format.as_deref(), Some("$0 `, ` $1 ` : ` type($0)"));
         assert_eq!(add.rust_name, "AddOp");
         assert_eq!(add.line, 9);
-        assert!(add.interfaces.as_deref().unwrap().contains("NOpdsInterface"));
+        assert!(
+            add.interfaces
+                .as_deref()
+                .unwrap()
+                .contains("NOpdsInterface")
+        );
         assert_eq!(out[2].format.as_deref(), Some("$0"));
         assert_eq!(out[3].docs, "Equivalent to LLVM's Add.");
         assert_eq!(out[3].rust_name, "AddOp2");
@@ -720,7 +739,10 @@ pliron_lsp_api::hints! {
         assert_eq!(f.operands, ["lb", "ub"]);
         // Not defined in the sources: the hint defines it.
         let v = idx.lookup("my.vec", None).unwrap();
-        assert_eq!((v.kind, v.docs.as_str(), v.line), (EntryKind::Type, "A vector.", 19));
+        assert_eq!(
+            (v.kind, v.docs.as_str(), v.line),
+            (EntryKind::Type, "A vector.", 19)
+        );
 
         let k = idx.knowledge();
         let facts = &k.ops["my.for"];

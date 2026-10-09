@@ -49,7 +49,10 @@ impl Client {
     pub fn notify(&self, method: &str, params: Value) {
         self.conn
             .sender
-            .send(Message::Notification(Notification::new(method.into(), params)))
+            .send(Message::Notification(Notification::new(
+                method.into(),
+                params,
+            )))
             .unwrap();
     }
 
@@ -66,7 +69,11 @@ impl Client {
         let id = RequestId::from(self.next_id);
         self.conn
             .sender
-            .send(Message::Request(Request::new(id.clone(), method.into(), params)))
+            .send(Message::Request(Request::new(
+                id.clone(),
+                method.into(),
+                params,
+            )))
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -98,7 +105,10 @@ impl Client {
                 .position(|n| n.method == "textDocument/publishDiagnostics")
             {
                 let n = self.notifications.remove(i);
-                let diags = n.params["diagnostics"].as_array().cloned().unwrap_or_default();
+                let diags = n.params["diagnostics"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 if pred(&diags) {
                     return diags;
                 }
@@ -131,4 +141,3 @@ impl Client {
         );
     }
 }
-

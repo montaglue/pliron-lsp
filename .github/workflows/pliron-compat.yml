@@ -1,0 +1,56 @@
+# Does pliron-lsp still work with pliron? For each pliron source, a tiny
+# dialect crate is created and `pliron-lsp check` must build its engine
+# (instrumenting that pliron) and report exact diagnostics; see
+# `cargo xtask check-pliron`.
+#
+# Daily: the newest release and the head of pliron's repository, to notice
+# changes that need a new instrumentation patch early. Weekly, on demand and
+# when the patches or the bundle generator change: every supported release
+# line too.
+name: pliron compatibility
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+    - cron: "30 5 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - third_party/patches/**
+      - crates/pliron-lsp/src/bundle.rs
+      - crates/pliron-lsp/src/patcher.rs
+      - crates/pliron-lsp-engine/**
+      - xtask/**
+      - .github/workflows/pliron-compat.yml
+  pull_request:
+    paths:
+      - third_party/patches/**
+      - crates/pliron-lsp/src/bundle.rs
+      - crates/pliron-lsp/src/patcher.rs
+      - crates/pliron-lsp-engine/**
+      - xtask/**
+      - .github/workflows/pliron-compat.yml
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check:
+    name: pliron ${{ matrix.pliron }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pliron: ${{ fromJSON(github.event.schedule == '30 4 * * *' && '["head", "latest"]' || '["0.16", "0.17", "0.18", "0.19", "latest", "head"]') }}
+    runs-on: ubuntu-latest
+    # Unreleased pliron must not block pull requests; scheduled runs report it.
+    continue-on-error: ${{ matrix.pliron == 'head' && github.event_name != 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pliron-${{ matrix.pliron }}
+          cache-directories: target/check-pliron
+      - run: cargo xtask check-pliron ${{ matrix.pliron }}

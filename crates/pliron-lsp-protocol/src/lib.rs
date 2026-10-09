@@ -188,7 +188,11 @@ pub struct Span {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpanKind {
     /// A whole operation; `name_start..name_end` is its `dialect.op` name.
-    Op { op: u32, name_start: Pos, name_end: Pos },
+    Op {
+        op: u32,
+        name_start: Pos,
+        name_end: Pos,
+    },
     /// An operation that failed to parse (until where recovery resumed).
     OpError,
     /// Definition of an op result.
@@ -317,11 +321,19 @@ pub struct ValueInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ValueDef {
-    Result { op: u32, index: u32 },
-    Arg { block: u32, index: u32 },
+    Result {
+        op: u32,
+        index: u32,
+    },
+    Arg {
+        block: u32,
+        index: u32,
+    },
     /// A value that is not attached to the parsed IR (e.g. inside an
     /// operation that failed to parse, or an unresolved name).
-    Detached { unresolved: bool },
+    Detached {
+        unresolved: bool,
+    },
 }
 
 /// Encode a message as one protocol line (marker + JSON + newline).

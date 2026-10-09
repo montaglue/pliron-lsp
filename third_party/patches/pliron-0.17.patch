@@ -1,67 +1,6 @@
-diff -ruN a/pliron-derive/src/derive_format.rs b/pliron-derive/src/derive_format.rs
---- a/pliron-derive/src/derive_format.rs	2026-10-07 20:37:40
-+++ b/pliron-derive/src/derive_format.rs	2026-10-07 20:37:40
-@@ -730,7 +730,7 @@
-     fn build_lit(_input: &FmtInput, lit: &str, _state: &mut State) -> TokenStream {
-         let trimmed_lit = lit.trim();
-         quote! {
--            ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#trimmed_lit))
-+            ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#trimmed_lit))
-             .parse_stream(state_stream)
-             .into_result()?;
-         }
-@@ -967,7 +967,7 @@
-             };
-             let labelled_parser = if let Some(label) = &label {
-                 quote! {
--                    (::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#label))
-+                    (::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#label))
-                         .skip(::pliron::combine::parser::char::char(':').skip(::pliron::combine::parser::char::spaces())))
-                         .with(#value_parser)
-                 }
-@@ -977,8 +977,8 @@
-             let delimited_labelled_parser = if let Some((open, close)) = &delimiters {
-                 quote! {
-                     ::pliron::combine::parser::sequence::between(
--                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#open)),
--                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#close)),
-+                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#open)),
-+                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#close)),
-                         #labelled_parser
-                     )
-                 }
-@@ -1496,7 +1496,7 @@
-             };
-             let labelled_parser = if let Some(label) = &label_opt {
-                 quote! {
--                (::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#label))
-+                (::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#label))
-                     .skip(::pliron::combine::parser::char::char(':').skip(::pliron::combine::parser::char::spaces()))).with(#attr_parser)
-                 }
-             } else {
-@@ -1505,8 +1505,8 @@
-             let delimited_labelled_parser = if let Some((open, close)) = &delimiters_opt {
-                 quote! {
-                     ::pliron::combine::parser::sequence::between(
--                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#open)),
--                        ::pliron::irfmt::parsers::spaced(::pliron::combine::parser::char::string(#close)),
-+                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#open)),
-+                        ::pliron::irfmt::parsers::spaced(::pliron::lsp::keyword(#close)),
-                         #labelled_parser
-                     )
-                 }
 diff -ruN a/src/attribute.rs b/src/attribute.rs
---- a/src/attribute.rs	2026-10-07 20:37:40
-+++ b/src/attribute.rs	2026-10-07 20:37:40
-@@ -50,7 +50,7 @@
- 
- use crate::{
-     builtin::attr_interfaces::OutlinedAttr,
--    combine::{Parser, parser, token},
-+    combine::{Parser, parser, parser::char::spaces, token},
-     common_traits::Verify,
-     context::{Context, collect_deduped_interface_verifiers},
-     dialect::{Dialect, DialectName},
+--- a/src/attribute.rs	2026-09-12 19:21:02
++++ b/src/attribute.rs	2026-10-09 00:44:14
 @@ -99,10 +99,26 @@
          state_stream: &mut StateStream<'a>,
          _arg: Self::Arg,
@@ -92,25 +31,23 @@ diff -ruN a/src/attribute.rs b/src/attribute.rs
      }
  }
  
-@@ -287,9 +303,15 @@
+@@ -287,9 +303,13 @@
          _arg: Self::Arg,
      ) -> ParseResult<'a, Self::Parsed> {
          let loc = state_stream.loc();
 -        let attr_id_parser = spaced(AttrId::parser(()));
-+        let attr_id_parser = spaces()
-+            .with((
-+                crate::lsp::position(),
-+                AttrId::parser(()),
-+                crate::lsp::position(),
-+            ))
-+            .skip(spaces());
++        let attr_id_parser = spaced((
++            crate::lsp::position(),
++            AttrId::parser(()),
++            crate::lsp::position(),
++        ));
  
 -        let mut attr_parser = attr_id_parser.then(move |attr_id: AttrId| {
 +        let mut attr_parser = attr_id_parser.then(move |(start, attr_id, id_end): (_, AttrId, _)| {
              let loc = loc.clone();
              combine::parser(move |parsable_state: &mut StateStream<'a>| {
                  let state = &parsable_state.state;
-@@ -298,14 +320,23 @@
+@@ -298,14 +318,23 @@
                      .dialects
                      .get(&attr_id.dialect)
                      .expect("Dialect name parsed but dialect isn't registered");
@@ -137,8 +74,8 @@ diff -ruN a/src/attribute.rs b/src/attribute.rs
          });
  
 diff -ruN a/src/basic_block.rs b/src/basic_block.rs
---- a/src/basic_block.rs	2026-10-07 20:37:40
-+++ b/src/basic_block.rs	2026-10-07 20:37:40
+--- a/src/basic_block.rs	2026-09-12 19:21:02
++++ b/src/basic_block.rs	2026-10-09 00:44:14
 @@ -514,8 +514,14 @@
          // after consuming the label+args are reported as committed errors.
          // Format: ^label(args) [optional_attrs] [!N]:
@@ -289,8 +226,8 @@ diff -ruN a/src/basic_block.rs b/src/basic_block.rs
 +    ops
  }
 diff -ruN a/src/irfmt/outlined.rs b/src/irfmt/outlined.rs
---- a/src/irfmt/outlined.rs	2026-10-07 20:37:40
-+++ b/src/irfmt/outlined.rs	2026-10-07 20:37:40
+--- a/src/irfmt/outlined.rs	2026-09-12 19:21:02
++++ b/src/irfmt/outlined.rs	2026-10-09 00:44:14
 @@ -406,8 +406,11 @@
  
      for ((outindex_loc, outindex), (loc_opt, named_attrs)) in loc_and_outline_entries {
@@ -316,28 +253,13 @@ diff -ruN a/src/irfmt/outlined.rs b/src/irfmt/outlined.rs
              }
              for (name, attr_or_ref) in named_attrs {
 diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
---- a/src/irfmt/parsers.rs	2026-10-07 20:37:40
-+++ b/src/irfmt/parsers.rs	2026-10-07 20:37:40
-@@ -6,12 +6,12 @@
- use core::{num::ParseIntError, str::FromStr};
- 
- use crate::{
--    arg_err,
-+    arg_err, input_err,
-     attribute::AttrObj,
-     basic_block::BasicBlock,
-     builtin::given_names::set_operation_result_name,
-     combine::{
--        Parser, Stream, any, between, many, many1, none_of,
-+        Parser, Positioned, Stream, any, between, many, many1, none_of,
-         parser::char::{digit, spaces},
-         sep_by, token,
-     },
+--- a/src/irfmt/parsers.rs	2026-09-12 19:21:02
++++ b/src/irfmt/parsers.rs	2026-10-09 00:44:14
 @@ -228,13 +228,21 @@
  /// the SSA operands of an [Operation]. If the SSA value hasn't been defined yet,
  /// a [forward reference](crate::builtin::ops::ForwardRefOp) is returned.
  pub fn ssa_opd_parse<'a>(state_stream: &mut StateStream<'a>, _arg: ()) -> ParseResult<'a, Value> {
-+    let start = state_stream.position();
++    let start = crate::combine::Positioned::position(state_stream);
      Identifier::parser(())
          .parse_stream(state_stream)
          .map(|opd| {
@@ -347,7 +269,7 @@ diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
                  .name_tracker
 -                .ssa_use(state_stream.state.ctx, &opd)
 +                .ssa_use(state_stream.state.ctx, &opd);
-+            let end = state_stream.position();
++            let end = crate::combine::Positioned::position(state_stream);
 +            crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::OperandUse {
 +                value,
 +                start,
@@ -361,7 +283,7 @@ diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
      state_stream: &mut StateStream<'a>,
      _arg: (),
  ) -> ParseResult<'a, Ptr<BasicBlock>> {
-+    let start = state_stream.position();
++    let start = crate::combine::Positioned::position(state_stream);
      token('^')
          .with(Identifier::parser(()))
          .parse_stream(state_stream)
@@ -372,7 +294,7 @@ diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
                  .name_tracker
 -                .block_use(state_stream.state.ctx, &opd)
 +                .block_use(state_stream.state.ctx, &opd);
-+            let end = state_stream.position();
++            let end = crate::combine::Positioned::position(state_stream);
 +            crate::lsp::record(&mut state_stream.state, || crate::lsp::Event::SuccessorUse {
 +                block,
 +                start,
@@ -397,7 +319,7 @@ diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
 +            .first()
 +            .map(|(_, loc)| loc.clone())
 +            .unwrap_or_else(|| op.deref(ctx).loc());
-+        return input_err!(
++        return crate::input_err!(
 +            loc,
 +            "{} result name(s) given, but this operation has {} result(s)",
 +            results.len(),
@@ -425,8 +347,8 @@ diff -ruN a/src/irfmt/parsers.rs b/src/irfmt/parsers.rs
      Ok(())
  }
 diff -ruN a/src/lib.rs b/src/lib.rs
---- a/src/lib.rs	2026-10-07 20:37:40
-+++ b/src/lib.rs	2026-10-07 20:37:40
+--- a/src/lib.rs	2026-09-12 19:21:02
++++ b/src/lib.rs	2026-10-09 00:44:14
 @@ -47,6 +47,7 @@
  pub mod irfmt;
  pub mod linked_list;
@@ -437,7 +359,7 @@ diff -ruN a/src/lib.rs b/src/lib.rs
  pub mod opts;
 diff -ruN a/src/lsp.rs b/src/lsp.rs
 --- a/src/lsp.rs	1970-01-01 02:00:00
-+++ b/src/lsp.rs	2026-10-07 20:37:40
++++ b/src/lsp.rs	2026-10-09 00:44:14
 @@ -0,0 +1,546 @@
 +//! Parse instrumentation for language tooling (pliron-lsp).
 +//!
@@ -986,8 +908,8 @@ diff -ruN a/src/lsp.rs b/src/lsp.rs
 +    }
 +}
 diff -ruN a/src/operation.rs b/src/operation.rs
---- a/src/operation.rs	2026-10-07 20:37:40
-+++ b/src/operation.rs	2026-10-07 20:37:40
+--- a/src/operation.rs	2026-09-12 19:21:02
++++ b/src/operation.rs	2026-10-09 00:44:14
 @@ -860,14 +860,23 @@
              .source()
              .expect("Location from Parsable must be Location::SrcPos");
@@ -1070,8 +992,8 @@ diff -ruN a/src/operation.rs b/src/operation.rs
  
                      if arg.look_for_outlined_attrs {
 diff -ruN a/src/parsable.rs b/src/parsable.rs
---- a/src/parsable.rs	2026-10-07 20:37:40
-+++ b/src/parsable.rs	2026-10-07 20:37:40
+--- a/src/parsable.rs	2026-09-12 19:21:02
++++ b/src/parsable.rs	2026-10-09 00:44:14
 @@ -397,6 +397,8 @@
  pub(crate) struct NameTracker {
      ssa_name_scope: Vec<IMap<Identifier, Value>>,
@@ -1148,8 +1070,8 @@ diff -ruN a/src/parsable.rs b/src/parsable.rs
              }
          }
 diff -ruN a/src/region.rs b/src/region.rs
---- a/src/region.rs	2026-10-07 20:37:40
-+++ b/src/region.rs	2026-10-07 20:37:40
+--- a/src/region.rs	2026-09-12 19:21:02
++++ b/src/region.rs	2026-10-09 00:44:14
 @@ -211,6 +211,10 @@
              .name_tracker
              .enter_region(state_stream.state.ctx, parent_op)?;
@@ -1234,43 +1156,25 @@ diff -ruN a/src/region.rs b/src/region.rs
 +    Ok(region).into_parse_result()
  }
 diff -ruN a/src/type.rs b/src/type.rs
---- a/src/type.rs	2026-10-07 20:37:40
-+++ b/src/type.rs	2026-10-07 20:37:40
-@@ -40,13 +40,13 @@
- 
- use crate::{
-     arg_err_noloc,
--    combine::{Parser, parser},
-+    combine::{Parser, parser, parser::char::spaces},
-     common_traits::Verify,
-     context::{Context, collect_deduped_interface_verifiers},
-     dialect::{Dialect, DialectName},
-     identifier::Identifier,
-     impl_printable_for_display, input_err,
--    irfmt::parsers::spaced,
-+
-     location::Located,
-     parsable::{Parsable, ParseResult, StateStream},
-     printable::{self, Printable},
-@@ -387,9 +387,15 @@
+--- a/src/type.rs	2026-09-12 19:21:02
++++ b/src/type.rs	2026-10-09 00:44:14
+@@ -387,9 +387,13 @@
          _arg: Self::Arg,
      ) -> ParseResult<'a, Self::Parsed> {
          let loc = state_stream.loc();
 -        let type_id_parser = spaced(TypeId::parser(()));
-+        let type_id_parser = spaces()
-+            .with((
-+                crate::lsp::position(),
-+                TypeId::parser(()),
-+                crate::lsp::position(),
-+            ))
-+            .skip(spaces());
++        let type_id_parser = spaced((
++            crate::lsp::position(),
++            TypeId::parser(()),
++            crate::lsp::position(),
++        ));
  
 -        let mut type_parser = type_id_parser.then(move |type_id: TypeId| {
 +        let mut type_parser = type_id_parser.then(move |(start, type_id, id_end): (_, TypeId, _)| {
              // This clone is to satify the borrow checker.
              let loc = loc.clone();
              combine::parser(move |parsable_state: &mut StateStream<'a>| {
-@@ -399,10 +405,21 @@
+@@ -399,10 +403,21 @@
                      .dialects
                      .get(&type_id.dialect)
                      .expect("Dialect name parsed but dialect isn't registered");
@@ -1294,24 +1198,22 @@ diff -ruN a/src/type.rs b/src/type.rs
              })
          });
  
-@@ -515,8 +532,14 @@
+@@ -515,8 +530,12 @@
          arg: Self::Arg,
      ) -> ParseResult<'a, Self::Parsed> {
          let loc = state_stream.loc();
 -        spaced(TypeId::parser(()))
 -            .then(move |type_id| {
-+        spaces()
-+            .with((
-+                crate::lsp::position(),
-+                TypeId::parser(()),
-+                crate::lsp::position(),
-+            ))
-+            .skip(spaces())
++        spaced((
++            crate::lsp::position(),
++            TypeId::parser(()),
++            crate::lsp::position(),
++        ))
 +            .then(move |(start, type_id, id_end): (_, TypeId, _)| {
                  let loc = loc.clone();
                  combine::parser(move |parsable_state: &mut StateStream<'a>| {
                      if type_id != T::get_type_id_static() {
-@@ -527,7 +550,18 @@
+@@ -527,7 +546,18 @@
                              type_id.disp(parsable_state.state.ctx)
                          )?
                      }

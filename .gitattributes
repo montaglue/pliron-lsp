@@ -1,0 +1,4 @@
+# The same line endings on every platform: tests compare positions, and the
+# pliron patches are applied line by line.
+* text=auto eol=lf
+*.vsix binary

@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use pliron_ir_syntax::lexer::{Offset, TokenKind, lex};
 use pliron_ir_syntax::LineIndex;
+use pliron_ir_syntax::lexer::{Offset, TokenKind, lex};
 use pliron_lsp_protocol::{
     AnalyzeResult, DiagPhase, HookSeverity, HookTarget, Model, Pos, SpanKind, ValueDef,
 };
@@ -128,8 +128,7 @@ impl Exact {
                 kind: s.kind,
             });
         }
-        x.spans
-            .sort_by_key(|s| (s.start, std::cmp::Reverse(s.end)));
+        x.spans.sort_by_key(|s| (s.start, std::cmp::Reverse(s.end)));
 
         let (tokens, _) = lex(text);
         // Symbol definitions: the first `@name` token inside the op's own
@@ -150,7 +149,9 @@ impl Exact {
                     && s <= t.start
                     && t.end <= e
                     && t.name(text) == name
-                    && !regions.iter().any(|(rs, re)| *rs <= t.start && t.end <= *re)
+                    && !regions
+                        .iter()
+                        .any(|(rs, re)| *rs <= t.start && t.end <= *re)
             });
             if let Some(t) = def {
                 x.symbols.push(SymbolDef {
@@ -164,7 +165,8 @@ impl Exact {
             if t.kind == TokenKind::SymbolRef
                 && !x.symbols.iter().any(|d| d.range == (t.start, t.end))
             {
-                x.symbol_uses.push(((t.start, t.end), t.name(text).to_string()));
+                x.symbol_uses
+                    .push(((t.start, t.end), t.name(text).to_string()));
             }
         }
 
@@ -194,7 +196,9 @@ impl Exact {
                     t.start >= from
                         && t.start <= from + 4096
                         && match kind {
-                            "dialect" => t.text(text) == name || t.text(text).split('.').next() == Some(name),
+                            "dialect" => {
+                                t.text(text) == name || t.text(text).split('.').next() == Some(name)
+                            }
                             _ => t.text(text) == name,
                         }
                 });
@@ -211,7 +215,10 @@ impl Exact {
             });
         }
         for d in res.hook_diags {
-            let Some(range) = x.target_range(d.op, d.target).or_else(|| x.target_range(d.op, HookTarget::OpName)) else {
+            let Some(range) = x
+                .target_range(d.op, d.target)
+                .or_else(|| x.target_range(d.op, HookTarget::OpName))
+            else {
                 continue;
             };
             x.diagnostics.push(XDiag {
@@ -223,7 +230,9 @@ impl Exact {
             });
         }
         for h in res.hook_hints {
-            let Some((s, e)) = x.target_range(h.op, h.target) else { continue };
+            let Some((s, e)) = x.target_range(h.op, h.target) else {
+                continue;
+            };
             let before = matches!(h.target, HookTarget::Operand { .. });
             x.hints.push(XHint {
                 offset: if before { s } else { e },
@@ -241,14 +250,18 @@ impl Exact {
         match target {
             HookTarget::OpName => Some(name),
             HookTarget::Op => Some(whole),
-            HookTarget::Result { index } => {
-                self.value_def.get(info.results.get(index as usize)?).copied()
-            }
+            HookTarget::Result { index } => self
+                .value_def
+                .get(info.results.get(index as usize)?)
+                .copied(),
             HookTarget::Operand { index } => {
                 let v = info.operands.get(index as usize)?;
                 // The same value may be used several times (`add c, c`):
                 // take its n-th use in this op (not in an op nested in it).
-                let nth = info.operands[..index as usize].iter().filter(|o| *o == v).count();
+                let nth = info.operands[..index as usize]
+                    .iter()
+                    .filter(|o| *o == v)
+                    .count();
                 let mut uses: Vec<Range> = self
                     .value_uses
                     .get(v)?
@@ -354,9 +367,9 @@ impl Exact {
                 let b = m.ops[op as usize].parent_block?;
                 Some(self.isolation_root(m.regions[m.blocks[b as usize].region as usize].parent_op))
             }
-            ValueDef::Arg { block, .. } => {
-                Some(self.isolation_root(m.regions[m.blocks[block as usize].region as usize].parent_op))
-            }
+            ValueDef::Arg { block, .. } => Some(
+                self.isolation_root(m.regions[m.blocks[block as usize].region as usize].parent_op),
+            ),
             ValueDef::Detached { .. } => None,
         }
     }

@@ -39,9 +39,7 @@ impl Document {
 
     /// The exact analysis, if it is for the current text.
     pub fn fresh_exact(&self) -> Option<&Exact> {
-        self.exact
-            .as_deref()
-            .filter(|x| x.text_hash == self.hash)
+        self.exact.as_deref().filter(|x| x.text_hash == self.hash)
     }
 
     pub fn apply_changes(
@@ -74,8 +72,7 @@ impl Document {
     }
 
     pub fn offset(&self, pos: Position, enc: Encoding) -> Offset {
-        self.line_index
-            .offset(lsp_to_linepos(pos), &self.text, enc)
+        self.line_index.offset(lsp_to_linepos(pos), &self.text, enc)
     }
 
     pub fn position(&self, off: Offset, enc: Encoding) -> Position {
