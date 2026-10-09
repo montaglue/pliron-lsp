@@ -242,6 +242,11 @@ fn check_pliron(source: &str) -> anyhow::Result<()> {
         let out = Command::new(&server)
             .current_dir(&dir)
             .args(["check", file])
+            // Like an editor starts it: without the toolchain that running
+            // under `cargo` pins.
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env_remove("CARGO")
+            .env_remove("RUSTC")
             .output()
             .context("running pliron-lsp")?;
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();

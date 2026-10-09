@@ -17,6 +17,7 @@ pub mod index;
 pub mod patcher;
 pub mod projects;
 pub mod server;
+pub mod toolchain;
 pub mod workspace;
 
 /// `std::fs::canonicalize`, but without the `\\?\` prefix Windows adds to

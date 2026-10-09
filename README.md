@@ -183,9 +183,15 @@ macro.
   pliron-llvm is built without its `llvm-sys` feature (the server never
   needs LLVM); if a build with the project's features fails, it is retried
   with minimal features.
-- The engine builds with the project's toolchain. If the project needs a
-  newer rustc than the one selected, add a `rust-toolchain.toml` or set
-  `RUSTUP_TOOLCHAIN` (VS Code: `pliron.server.extraEnv`).
+- **Toolchain.** A project's own choice is used: its `rust-toolchain.toml`,
+  a rustup override, or `RUSTUP_TOOLCHAIN` (VS Code:
+  `pliron.server.extraEnv`). Otherwise, when rustup's default toolchain is
+  older than what the engine's dependencies declare (`rust-version`), an
+  installed toolchain that is new enough builds the engine instead (stable
+  first, then pinned versions, beta, nightly), and the status says which
+  and why. If a build still fails because the compiler is too old, it is
+  retried with the newest installed toolchain. Nothing is installed
+  automatically; the error says what to install.
 
 **What building runs**
 - Building an engine compiles the dialect crates and runs their build

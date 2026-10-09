@@ -784,12 +784,22 @@ pub enum BuildEvent {
 pub fn build(
     meta: &Metadata,
     bundle_dir: &Path,
+    toolchain: &crate::toolchain::Choice,
     mut on_event: impl FnMut(BuildEvent),
 ) -> anyhow::Result<PathBuf> {
     let root = meta.workspace_root.as_std_path();
     let state = state_dir(meta);
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut child = Command::new(cargo)
+    let mut cmd = match toolchain {
+        crate::toolchain::Choice::Default => {
+            Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        }
+        crate::toolchain::Choice::Use(name) => {
+            let mut c = Command::new("rustup");
+            c.args(["run", name, "cargo"]);
+            c
+        }
+    };
+    let mut child = cmd
         .args([
             "build",
             "--bin",
@@ -798,8 +808,8 @@ pub fn build(
         ])
         .arg("--manifest-path")
         .arg(bundle_dir.join("Cargo.toml"))
-        // The project's directory decides the toolchain (rust-toolchain.toml)
-        // and cargo configuration.
+        // The project's directory decides the cargo configuration, and the
+        // toolchain unless one is given (see `toolchain`).
         .current_dir(root)
         .env("CARGO_TARGET_DIR", state.join("target"))
         .env("CARGO_TERM_COLOR", "never")

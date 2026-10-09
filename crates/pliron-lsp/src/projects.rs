@@ -7,6 +7,7 @@ use crossbeam_channel::Sender;
 
 use crate::bundle::{self, BuildEvent, NoBundle};
 use crate::index::DialectIndex;
+use crate::toolchain::{self, Choice};
 
 /// Result of preparing a project's engine.
 #[derive(Debug)]
@@ -151,41 +152,72 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
     };
     let dirs = index_dirs(&meta, &sel);
     index(root, &dirs);
-    let description = bundle::describe(&sel);
+    let mut description = bundle::describe(&sel);
+    let plan = toolchain::plan(root, toolchain::required(&meta, &sel));
+    if let Some(note) = &plan.note {
+        progress(note.clone());
+    }
     progress(format!("building dialect engine ({description})"));
     let dir = match bundle::generate(&meta, &sel) {
         Ok(d) => d,
         Err(e) => return Outcome::Failed(format!("{e:#}")),
     };
-    let build = |sel: &bundle::Selection| -> anyhow::Result<PathBuf> {
+    let build = |sel: &bundle::Selection, choice: &Choice| -> anyhow::Result<PathBuf> {
         let dir = bundle::generate(&meta, sel)?;
-        bundle::build(&meta, &dir, |ev| match ev {
+        bundle::build(&meta, &dir, choice, |ev| match ev {
             BuildEvent::Progress(m) => progress(m),
         })
     };
-    let _ = dir;
-    let exe = match build(&sel) {
+    let mut choice = plan.choice.clone();
+    let exe = match build(&sel, &choice) {
         Ok(exe) => exe,
         Err(first) => {
+            let first = format!("{first:#}");
+            let mut exe = None;
+            // A dependency may need a newer compiler without declaring it.
+            if choice == Choice::Default
+                && toolchain::too_old(&first)
+                && let Some((_, have)) = &plan.active
+                && let Some(t) = toolchain::newest_after(root, *have)
+            {
+                progress(format!(
+                    "retrying with toolchain {} (rustc {})",
+                    t.name,
+                    toolchain::display(t.version)
+                ));
+                choice = Choice::Use(t.name);
+                exe = build(&sel, &choice).ok();
+            }
             // Native dependencies enabled by the project's features may not
             // build here; the dialects themselves rarely need them.
-            progress("retrying with minimal features".into());
-            match build(&bundle::minimal_features(&sel)) {
+            let exe = match exe {
+                Some(exe) => Ok(exe),
+                None => {
+                    progress("retrying with minimal features".into());
+                    build(&bundle::minimal_features(&sel), &choice)
+                }
+            };
+            match exe {
                 Ok(exe) => exe,
                 Err(_) => {
-                    let mut msg = format!("{first:#}");
-                    if msg.contains("requires rustc") {
-                        msg.push_str(
-                            "\nhint: the project needs a newer Rust toolchain than the one cargo selected; \
-                             add a rust-toolchain.toml to the project or set RUSTUP_TOOLCHAIN \
-                             (in VS Code: `pliron.server.extraEnv`)",
-                        );
+                    let mut msg = first;
+                    if toolchain::too_old(&msg) {
+                        msg.push_str(&format!(
+                            "\nhint: {}",
+                            plan.note.as_deref().unwrap_or(
+                                "the engine needs a newer Rust compiler: run `rustup update stable`, \
+                                 or add a rust-toolchain.toml to the project"
+                            )
+                        ));
                     }
                     return Outcome::Failed(msg);
                 }
             }
         }
     };
+    if let Choice::Use(name) = &choice {
+        description.push_str(&format!("; built with toolchain {name}"));
+    }
     let mut watched = bundle::watched_dirs(&sel);
     watched.push(root.join("Cargo.toml"));
     watched.push(root.join("Cargo.lock"));

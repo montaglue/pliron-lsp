@@ -110,7 +110,11 @@ fn toy_dialect_bundle() {
     assert_eq!(names, ["toy-dialect"]);
 
     let bundle_dir = bundle::generate(&meta, &sel).unwrap();
-    let exe = bundle::build(&meta, &bundle_dir, |e| eprintln!("{e:?}")).expect("build");
+    // The engine's own minimum at least (pliron 0.18 needs rustc 1.91).
+    let need = pliron_lsp::toolchain::required(&meta, &sel);
+    assert!(need.0 >= pliron_lsp::toolchain::ENGINE_MIN, "{need:?}");
+    let toolchain = pliron_lsp::toolchain::plan(&dir, need).choice;
+    let exe = bundle::build(&meta, &bundle_dir, &toolchain, |e| eprintln!("{e:?}")).expect("build");
 
     let text = std::fs::read_to_string(dir.join("sample.pliron")).unwrap();
     let r = analyze(&exe, &text);
@@ -177,7 +181,7 @@ fn toy_dialect_bundle() {
     let lib = dir.join("toy-dialect/src/lib.rs");
     let src = std::fs::read_to_string(&lib).unwrap();
     std::fs::write(&lib, src.replace("`value` ` = ` $0", "`show` $0")).unwrap();
-    let exe2 = bundle::build(&meta, &bundle_dir, |_| {}).expect("rebuild");
+    let exe2 = bundle::build(&meta, &bundle_dir, &toolchain, |_| {}).expect("rebuild");
     let r = analyze(&exe2, &text);
     assert!(
         !r.parse_errors.is_empty(),
