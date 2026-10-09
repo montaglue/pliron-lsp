@@ -10,11 +10,12 @@ import * as ext from "./lsp_ext";
 
 export const SCHEME = "pliron-view";
 
-export type ViewKind = "model" | "syntax" | "registry" | "status";
+export type ViewKind = "model" | "syntax" | "printed" | "registry" | "status";
 
 const REQUESTS: Record<ViewKind, lc.RequestType<ext.DocParams, string, void>> = {
   model: ext.viewEngineModel,
   syntax: ext.viewSyntaxTree,
+  printed: ext.viewPrinted,
   registry: ext.dialectRegistry,
   status: ext.analyzerStatus,
 };
@@ -22,6 +23,7 @@ const REQUESTS: Record<ViewKind, lc.RequestType<ext.DocParams, string, void>> = 
 const TITLES: Record<ViewKind, string> = {
   model: "Engine Model",
   syntax: "Syntax Tree",
+  printed: "Printed Form",
   registry: "Dialect Registry",
   status: "Status",
 };
@@ -53,7 +55,10 @@ export class ViewProvider implements vscode.TextDocumentContentProvider, vscode.
 
   /** The virtual document URI for a view of `source`. */
   static uri(kind: ViewKind, source: vscode.Uri | undefined): vscode.Uri {
-    const ext = kind === "registry" || kind === "status" ? "md" : "txt";
+    // The printed form is pliron IR: highlighted, but not analyzed (the
+    // language client only serves `file:` and `untitled:` documents).
+    const ext =
+      kind === "registry" || kind === "status" ? "md" : kind === "printed" ? "pliron" : "txt";
     const query = source ? `source=${encodeURIComponent(source.toString())}` : "";
     return vscode.Uri.from({
       scheme: SCHEME,

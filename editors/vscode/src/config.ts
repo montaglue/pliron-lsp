@@ -15,6 +15,7 @@ export class Config {
     "pliron.engine.enabled",
     "pliron.engine.path",
     "pliron.bundles.enabled",
+    "pliron.diagnostics.roundTrip",
   ];
 
   get serverPath(): string | undefined {
@@ -37,6 +38,10 @@ export class Config {
     return this.cfg.get<boolean>("bundles.enabled", true);
   }
 
+  get roundTrip(): boolean {
+    return this.cfg.get<boolean>("diagnostics.roundTrip", true);
+  }
+
   /** Options sent to the server in `initialize`. */
   initializationOptions(): object {
     return {
@@ -45,6 +50,7 @@ export class Config {
       // Building a dialect engine compiles the workspace's dialect crates
       // and runs their build scripts / proc macros: trusted workspaces only.
       disableBundles: !this.bundlesEnabled || !vscode.workspace.isTrusted,
+      roundTrip: this.roundTrip,
     };
   }
 }

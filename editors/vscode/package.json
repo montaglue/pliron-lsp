@@ -1,7 +1,7 @@
 {
   "name": "pliron",
   "displayName": "pliron IR",
-  "description": "pliron IR support powered by pliron-lsp: exact diagnostics, highlighting, navigation and type hints from your project's own dialects \u2014 no setup",
+  "description": "pliron IR support powered by pliron-lsp: exact diagnostics, highlighting, navigation and type hints from your project's own dialects — no setup",
   "version": "0.1.0",
   "publisher": "pliron-lsp",
   "license": "Apache-2.0",
@@ -100,6 +100,11 @@
           "default": true,
           "markdownDescription": "Automatically build a dialect engine for cargo projects that define pliron dialects (and rebuild it when their sources change)."
         },
+        "pliron.diagnostics.roundTrip": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Warn about operations whose printed form (by the dialect's printer) does not parse back to the same IR: bugs in a dialect's printer or parser. Checked for documents without errors. **Show Printed Form** shows the printed text."
+        },
         "pliron.trace.server": {
           "type": "string",
           "enum": [
@@ -162,6 +167,11 @@
         "category": "pliron"
       },
       {
+        "command": "pliron.viewPrinted",
+        "title": "Show Printed Form",
+        "category": "pliron"
+      },
+      {
         "command": "pliron.showRegistry",
         "title": "Show Dialect Registry",
         "category": "pliron"
@@ -195,6 +205,10 @@
         },
         {
           "command": "pliron.viewSyntaxTree",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.viewPrinted",
           "when": "editorLangId == pliron"
         },
         {

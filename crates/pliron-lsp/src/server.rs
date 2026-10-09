@@ -52,6 +52,9 @@ pub struct InitOptions {
     pub disable_engine: bool,
     /// Do not build dialect bundles for cargo projects.
     pub disable_bundles: bool,
+    /// Report operations whose printed form does not parse back to the
+    /// same IR (default: on).
+    pub round_trip: Option<bool>,
 }
 
 /// `pliron/status` notification.
@@ -618,7 +621,8 @@ impl Server {
                     REFERENCE.into(),
                     "reference".into(),
                     self.engine_tx.clone(),
-                ),
+                )
+                .with_round_trip(self.opts.round_trip.unwrap_or(true)),
             );
         }
         self.engines.get_mut(key)
@@ -793,7 +797,7 @@ impl Server {
                         self.known_ops.insert(op.opid.clone());
                     }
                 }
-                let exact = Exact::new(result, &doc.text, &doc.line_index);
+                let exact = Exact::new(*result, &doc.text, &doc.line_index);
                 doc.exact = Some(Arc::new(exact));
                 doc.engine_note = None;
                 self.publish(&uri, true);
@@ -872,7 +876,8 @@ impl Server {
                             .unwrap_or_else(|| key.clone());
                         self.engines.insert(
                             key.clone(),
-                            Engine::new(exe, key.clone(), label, self.engine_tx.clone()),
+                            Engine::new(exe, key.clone(), label, self.engine_tx.clone())
+                                .with_round_trip(self.opts.round_trip.unwrap_or(true)),
                         );
                         (ProjectState::Ready, ("ready", description))
                     }
@@ -1509,6 +1514,7 @@ impl Server {
             }
             "pliron/viewEngineModel"
             | "pliron/viewSyntaxTree"
+            | "pliron/viewPrinted"
             | "pliron/dialectRegistry"
             | "pliron/bundleManifest" => {
                 let p: DocParams = serde_json::from_value(req.params)?;
@@ -1522,6 +1528,9 @@ impl Server {
                     }
                     "pliron/viewSyntaxTree" => {
                         Value::String(features::views::syntax_tree(self.doc(&uri)?))
+                    }
+                    "pliron/viewPrinted" => {
+                        Value::String(features::views::printed(self.doc(&uri)?))
                     }
                     "pliron/dialectRegistry" => {
                         let index = self.index_for(&uri);

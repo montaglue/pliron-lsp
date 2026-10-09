@@ -30,6 +30,7 @@ automatically.
 | `pliron: Show Status` | Projects, engines, bundles and indexes. |
 | `pliron: View Engine Model` | The IR as the dialect engine understood it. Updates while you type. |
 | `pliron: View Syntax Tree` | The dialect-agnostic syntax layer's view. |
+| `pliron: Show Printed Form` | The document as the dialects' printers print it (what the round-trip check parses again). |
 | `pliron: Show Dialect Registry` | Ops, types and attributes defined in your dialect sources, with links. |
 | `pliron: Rebuild Dialect Engine` | Force a rebuild. |
 | `pliron: Open Generated Bundle Manifest` | The generated `Cargo.toml` of the engine. |
@@ -46,6 +47,7 @@ Clicking the status bar item opens a menu with these commands.
 | `pliron.engine.enabled` | Turn dialect engines off (syntax features only). |
 | `pliron.engine.path` | Use one fixed engine binary for every file. |
 | `pliron.bundles.enabled` | Turn off automatic project engines. |
+| `pliron.diagnostics.roundTrip` | Warn about operations whose printed form does not parse back to the same IR (on by default). |
 | `pliron.trace.server` | Trace LSP traffic. |
 
 Building a project engine compiles your dialect crates, which runs their

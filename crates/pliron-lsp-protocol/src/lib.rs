@@ -50,6 +50,10 @@ pub struct AnalyzeParams {
     pub want_model: bool,
     /// Rendered attributes longer than this (in chars) are truncated.
     pub max_attr_len: u32,
+    /// Print the IR with the dialects' printers, parse that again and
+    /// compare (see [`AnalyzeResult::round_trip`]).
+    #[serde(default)]
+    pub round_trip: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +136,14 @@ pub struct AnalyzeResult {
     /// Inlay hints from dialect hooks.
     #[serde(default)]
     pub hook_hints: Vec<HookHint>,
+    /// With [`AnalyzeParams::round_trip`], for a document without errors:
+    /// operations whose printed form does not parse, or parses into
+    /// something else (dialect printer/parser bugs).
+    #[serde(default)]
+    pub round_trip: Vec<EngineDiag>,
+    /// With [`AnalyzeParams::round_trip`]: the IR as pliron prints it.
+    #[serde(default)]
+    pub printed: Option<String>,
     pub elapsed_us: u64,
 }
 
@@ -231,6 +243,8 @@ pub enum DiagPhase {
     /// Reported by a dialect lint hook (frontend only; engines send
     /// [`HookDiag`]s).
     Lint,
+    /// Printing and re-parsing does not give the same IR.
+    RoundTrip,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -374,6 +388,7 @@ mod tests {
                 verify: VerifyMode::First,
                 want_model: true,
                 max_attr_len: 200,
+                round_trip: false,
             }),
         };
         let line = encode_line(&req);

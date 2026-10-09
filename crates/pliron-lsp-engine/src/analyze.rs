@@ -58,6 +58,8 @@ pub(crate) fn panicked(text_hash: u64, message: String) -> AnalyzeResult {
         spans: Vec::new(),
         hook_diags: Vec::new(),
         hook_hints: Vec::new(),
+        round_trip: Vec::new(),
+        printed: None,
         elapsed_us: 0,
     }
 }
@@ -150,6 +152,16 @@ pub fn analyze(params: &AnalyzeParams) -> AnalyzeResult {
         }
     }
 
+    // Printer/parser agreement, for IR without errors.
+    let (mut printed, mut round_trip) = (None, Vec::new());
+    if params.round_trip
+        && parse_errors.is_empty()
+        && verify_errors.is_empty()
+        && let Some(top) = top_op
+    {
+        (printed, round_trip) = crate::roundtrip::round_trip(&ctx, top);
+    }
+
     let model = top_op.map(|_| std::mem::take(&mut b.model));
     AnalyzeResult {
         text_hash: params.text_hash,
@@ -159,6 +171,8 @@ pub fn analyze(params: &AnalyzeParams) -> AnalyzeResult {
         spans,
         hook_diags,
         hook_hints,
+        round_trip,
+        printed,
         elapsed_us: started.elapsed().as_micros() as u64,
     }
 }
@@ -549,6 +563,7 @@ mod tests {
             verify: VerifyMode::First,
             want_model: true,
             max_attr_len: 200,
+            round_trip: false,
         })
     }
 
@@ -701,6 +716,7 @@ mod tests {
             verify: VerifyMode::All,
             want_model: true,
             max_attr_len: 200,
+            round_trip: false,
         });
         assert!(r.parse_errors.is_empty(), "{:?}", r.parse_errors);
         let lines: Vec<u32> = r
@@ -772,6 +788,7 @@ mod tests {
                 verify: VerifyMode::All,
                 want_model: true,
                 max_attr_len: 200,
+                round_trip: false,
             });
             assert!(
                 r.parse_errors.is_empty() && r.verify_errors.is_empty(),
@@ -810,6 +827,20 @@ mod tests {
                     .any(|h| h.label == "lhs:" && h.target == HookTarget::Operand { index: 0 })
             );
         }
+    }
+
+    #[test]
+    fn demo_round_trips() {
+        let r = analyze(&AnalyzeParams {
+            text_hash: text_hash(DEMO),
+            text: DEMO.to_string(),
+            verify: VerifyMode::All,
+            want_model: false,
+            max_attr_len: 200,
+            round_trip: true,
+        });
+        assert!(r.round_trip.is_empty(), "{:#?}", r.round_trip);
+        assert!(r.printed.unwrap().contains("llvm.call @callee"));
     }
 
     #[test]

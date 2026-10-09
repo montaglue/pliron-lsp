@@ -36,6 +36,7 @@ export const commands: Record<string, Cmd> = {
   "pliron.showStatus": view("status", false),
   "pliron.viewEngineModel": view("model", true),
   "pliron.viewSyntaxTree": view("syntax", true),
+  "pliron.viewPrinted": view("printed", true),
   "pliron.showRegistry": view("registry", true),
 
   "pliron.openBundleManifest": (ctx) => async () => {
@@ -89,6 +90,7 @@ export const commands: Record<string, Cmd> = {
       { label: "$(info) Show Status", command: "pliron.showStatus" },
       { label: "$(list-tree) View Engine Model", command: "pliron.viewEngineModel" },
       { label: "$(symbol-structure) View Syntax Tree", command: "pliron.viewSyntaxTree" },
+      { label: "$(output) Show Printed Form", command: "pliron.viewPrinted" },
       { label: "$(book) Show Dialect Registry", command: "pliron.showRegistry" },
       { label: "$(tools) Rebuild Dialect Engine", command: "pliron.rebuildEngine" },
       { label: "$(file-code) Open Generated Bundle Manifest", command: "pliron.openBundleManifest" },

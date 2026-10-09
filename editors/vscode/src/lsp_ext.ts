@@ -18,6 +18,9 @@ export const viewEngineModel = new lc.RequestType<DocParams, string, void>(
 export const viewSyntaxTree = new lc.RequestType<DocParams, string, void>(
   "pliron/viewSyntaxTree"
 );
+
+/** The document as pliron prints it (from the round trip check). */
+export const viewPrinted = new lc.RequestType<DocParams, string, void>("pliron/viewPrinted");
 /** Ops / types / attributes found in the dialect sources (markdown). */
 export const dialectRegistry = new lc.RequestType<DocParams, string, void>(
   "pliron/dialectRegistry"

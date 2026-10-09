@@ -19,6 +19,7 @@
 mod analyze;
 mod hooks;
 mod probe;
+mod roundtrip;
 
 use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -91,7 +92,6 @@ pub(crate) fn take_panic() -> String {
 
 /// The message of a caught panic (with its location when the panic hook
 /// recorded it).
-#[cfg(feature = "hooks")]
 pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     let recorded = LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take();
     recorded.unwrap_or_else(|| {

@@ -72,6 +72,7 @@ fn analyze(exe: &Path, text: &str) -> pliron_lsp_protocol::AnalyzeResult {
             verify: VerifyMode::First,
             want_model: true,
             max_attr_len: 200,
+            round_trip: false,
         }),
     };
     let mut stdin = child.stdin.take().unwrap();

@@ -55,7 +55,12 @@ impl SyncEngine {
         })
     }
 
-    fn analyze(&mut self, text: &str, timeout: Duration) -> anyhow::Result<AnalyzeResult> {
+    fn analyze(
+        &mut self,
+        text: &str,
+        round_trip: bool,
+        timeout: Duration,
+    ) -> anyhow::Result<AnalyzeResult> {
         let id = self.next_id;
         self.next_id += 1;
         let req = Request {
@@ -66,6 +71,7 @@ impl SyncEngine {
                 verify: VerifyMode::All,
                 want_model: true,
                 max_attr_len: 200,
+                round_trip,
             }),
         };
         self.stdin.write_all(encode_line(&req).as_bytes())?;
@@ -116,7 +122,7 @@ fn collect_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 /// `pliron-lsp check [--no-engine] [--no-bundles] [--engine <exe>]
-/// [--format human|json] [--deny-warnings] [paths...]`
+/// [--roundtrip] [--format human|json] [--deny-warnings] [paths...]`
 pub fn check(args: &[String]) -> anyhow::Result<i32> {
     let mut paths = Vec::new();
     let mut no_engine = false;
@@ -124,6 +130,7 @@ pub fn check(args: &[String]) -> anyhow::Result<i32> {
     let mut engine_override = None;
     let mut json = false;
     let mut deny_warnings = false;
+    let mut round_trip = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -132,9 +139,10 @@ pub fn check(args: &[String]) -> anyhow::Result<i32> {
             "--engine" => engine_override = it.next().map(PathBuf::from),
             "--format" => json = it.next().is_some_and(|f| f == "json"),
             "--deny-warnings" => deny_warnings = true,
+            "--roundtrip" => round_trip = true,
             "-h" | "--help" => {
                 println!(
-                    "usage: pliron-lsp check [--no-engine] [--no-bundles] [--engine <exe>] [--format human|json] [--deny-warnings] [paths...]"
+                    "usage: pliron-lsp check [--no-engine] [--no-bundles] [--engine <exe>] [--roundtrip] [--format human|json] [--deny-warnings] [paths...]\n\n  --roundtrip      also report operations whose printed form does not parse\n                   back to the same IR (bugs in a dialect's printer or parser)"
                 );
                 return Ok(0);
             }
@@ -193,11 +201,11 @@ pub fn check(args: &[String]) -> anyhow::Result<i32> {
                 if !engines.contains_key(exe) {
                     engines.insert(exe.clone(), SyncEngine::spawn(exe)?);
                 }
-                match engines
-                    .get_mut(exe)
-                    .unwrap()
-                    .analyze(&text, Duration::from_secs(60))
-                {
+                match engines.get_mut(exe).unwrap().analyze(
+                    &text,
+                    round_trip,
+                    Duration::from_secs(60),
+                ) {
                     Ok(r) => Some(r),
                     Err(e) => {
                         engines.remove(exe);

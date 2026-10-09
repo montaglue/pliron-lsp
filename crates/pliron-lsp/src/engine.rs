@@ -49,7 +49,7 @@ pub enum Finished {
     Hello(EngineInfo),
     Analysis {
         uri: Url,
-        result: AnalyzeResult,
+        result: Box<AnalyzeResult>,
     },
     Probe(ProbeParams),
     /// The engine died or timed out while analyzing `uri`.
@@ -96,9 +96,17 @@ pub struct Engine {
     pub timeout: Duration,
     restarts: u32,
     pub last_error: Option<String>,
+    /// Ask for the printer/parser round trip (on by default).
+    pub round_trip: bool,
 }
 
 impl Engine {
+    /// Ask (or not) for the printer/parser round trip with each analysis.
+    pub fn with_round_trip(mut self, on: bool) -> Engine {
+        self.round_trip = on;
+        self
+    }
+
     pub fn new(exe: PathBuf, key: String, label: String, events: Sender<EngineEvent>) -> Engine {
         Engine {
             exe,
@@ -115,6 +123,7 @@ impl Engine {
             timeout: Duration::from_secs(10),
             restarts: 0,
             last_error: None,
+            round_trip: true,
         }
     }
 
@@ -228,6 +237,7 @@ impl Engine {
                     verify: VerifyMode::All,
                     want_model: true,
                     max_attr_len: 200,
+                    round_trip: self.round_trip,
                 }),
                 Pending::Probe(p) => RequestBody::Probe(p.clone()),
             }
@@ -319,7 +329,10 @@ impl Engine {
                     }
                     ResponseBody::Analyze(result) => {
                         if let Pending::Analyze { uri, .. } = inflight.what {
-                            out.push(Finished::Analysis { uri, result });
+                            out.push(Finished::Analysis {
+                                uri,
+                                result: Box::new(result),
+                            });
                         }
                     }
                     ResponseBody::Probe(p) => out.push(Finished::Probe(p)),

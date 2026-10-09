@@ -189,6 +189,19 @@ suite("pliron extension", () => {
     );
   });
 
+  test("printed form view", async () => {
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand("pliron.viewPrinted");
+    const printed = await until("printed view", async () => {
+      const d = vscode.workspace.textDocuments.find(
+        (t) => t.uri.scheme === "pliron-view" && t.uri.query.includes("kind=printed")
+      );
+      const t = d?.getText() ?? "";
+      return t.includes("outlined_attributes:") ? t : undefined;
+    });
+    assert.ok(printed.includes("llvm.call @callee"), printed);
+  });
+
   test("server location", async () => {
     const api = vscode.extensions.getExtension("pliron-lsp.pliron")!.exports;
     const source = api.ctx.server?.source;

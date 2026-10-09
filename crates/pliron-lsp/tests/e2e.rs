@@ -108,6 +108,18 @@ fn engine_exact_features() {
     assert!(text.contains("r: builtin.integer i64"), "{text}");
     assert!(text.contains("result #0 of `llvm.call`"), "{text}");
 
+    // The round trip: the demo prints and parses back cleanly (no
+    // diagnostics above), and its printed form is available.
+    let printed = c.request(
+        "pliron/viewPrinted",
+        json!({ "textDocument": { "uri": URI } }),
+    );
+    let printed = printed.as_str().unwrap();
+    assert!(
+        printed.contains("llvm.call @callee") && printed.contains("outlined_attributes:"),
+        "{printed}"
+    );
+
     // Inlay hint for `r` (its type is not spelled out), none for `z`.
     let hints = c.request(
         "textDocument/inlayHint",

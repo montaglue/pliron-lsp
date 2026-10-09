@@ -257,3 +257,14 @@ pub fn registry(index: Option<&DialectIndex>) -> String {
     }
     out
 }
+
+/// The document as pliron prints it (from the round trip).
+pub fn printed(doc: &Document) -> String {
+    match doc.fresh_exact().and_then(|x| x.printed.as_deref()) {
+        Some(p) => p.to_string(),
+        None => {
+            "// pliron prints a document once its dialect engine has analyzed it without errors.\n"
+                .to_string()
+        }
+    }
+}

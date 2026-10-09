@@ -64,6 +64,8 @@ pub struct Exact {
     pub symbol_uses: Vec<(Range, String)>,
     pub diagnostics: Vec<XDiag>,
     pub hints: Vec<XHint>,
+    /// The IR as pliron prints it (with the round trip).
+    pub printed: Option<String>,
     pub elapsed_us: u64,
 }
 
@@ -211,6 +213,25 @@ impl Exact {
                 message: d.message,
                 phase: d.phase,
                 severity: HookSeverity::Error,
+                source: None,
+            });
+        }
+        // Round trip problems: at the name of the op they are about.
+        x.printed = res.printed;
+        for d in res.round_trip {
+            let Some(p) = d.pos else { continue };
+            let off = to_offset(li, text, p);
+            let range = x
+                .op_span
+                .values()
+                .find(|(whole, _)| whole.0 == off)
+                .map(|(_, name)| *name)
+                .unwrap_or_else(|| token_range(off));
+            x.diagnostics.push(XDiag {
+                range,
+                message: d.message,
+                phase: DiagPhase::RoundTrip,
+                severity: HookSeverity::Warning,
                 source: None,
             });
         }
@@ -401,5 +422,54 @@ impl Exact {
             self.model.values.get(value as usize).map(|v| v.def),
             Some(ValueDef::Detached { unresolved: true })
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pliron_lsp_protocol::{EngineDiag, OpInfo, Span};
+
+    #[test]
+    fn round_trip_problems_are_warnings_at_the_op_name() {
+        let text = "builtin.module @m {\n  ^e():\n  x = t.op 1\n}\n";
+        let li = LineIndex::new(text);
+        let pos = |line, column| Pos { line, column };
+        let res = AnalyzeResult {
+            text_hash: 0,
+            parse_errors: Vec::new(),
+            verify_errors: Vec::new(),
+            model: Some(Model {
+                ops: vec![OpInfo::default(), OpInfo::default()],
+                ..Model::default()
+            }),
+            spans: vec![Span {
+                start: pos(3, 3),
+                end: pos(3, 13),
+                kind: SpanKind::Op {
+                    op: 1,
+                    name_start: pos(3, 7),
+                    name_end: pos(3, 11),
+                },
+            }],
+            hook_diags: Vec::new(),
+            hook_hints: Vec::new(),
+            round_trip: vec![EngineDiag {
+                phase: DiagPhase::RoundTrip,
+                pos: Some(pos(3, 3)),
+                message: "printing and parsing this operation again changes it".into(),
+                op: None,
+            }],
+            printed: Some("printed".into()),
+            elapsed_us: 0,
+        };
+        let x = Exact::new(res, text, &li);
+        let d = &x.diagnostics[0];
+        assert_eq!(&text[d.range.0 as usize..d.range.1 as usize], "t.op");
+        assert_eq!(
+            (d.phase, d.severity),
+            (DiagPhase::RoundTrip, HookSeverity::Warning)
+        );
+        assert_eq!(x.printed.as_deref(), Some("printed"));
     }
 }

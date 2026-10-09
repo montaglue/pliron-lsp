@@ -18,6 +18,7 @@ of your dialects drive highlighting, diagnostics, navigation and type hints.
 | References, highlight, rename | Values, block arguments and labels within their pliron name scope; a rename that would clash with another name of the scope is refused. `@symbols` across the workspace's IR files: the definition in the current file (or the one file defining it) and every reference to it; other files' own `@name` are left alone. |
 | Reference counts | "N references" above every `@function` (code lens), counted across the workspace; click to peek them. |
 | Source locations | `"src/kernel.rs": line: 12, column: 5` in `outlined_attributes:` (also inside `fused`/`callsite`/`name` locations) is a link to that file and position; Cmd-click or peek-definition shows the code. Relative paths are resolved against the IR file's directory and its parents, then the workspace folders. |
+| Round-trip check | Each document without errors is printed with the dialects' own printers and parsed again; operations whose printed form does not parse, or parses into something else (a lost attribute, other types, …), get a warning that says what changed and how it was printed. These are bugs in a dialect's printer or parser. **Show Printed Form** shows the printed text. |
 | Hover | Exact value types (as printed by pliron), the defining op, op signatures and attributes, and **Rust doc comments** of ops, types and attributes. |
 | Type inlay hints | Result types that the op's syntax does not spell out, e.g. the result of `llvm.call`. |
 | Completion | In-scope values (with types), `^labels`, `@symbols`, op names with docs and a **snippet of their syntax** generated from the op's format string (`llvm.icmp ${1:opd0} <${2:predicate}> ${3:opd1} : ${4:type}`). |
@@ -32,6 +33,7 @@ of your dialects drive highlighting, diagnostics, navigation and type hints.
 ```sh
 pliron-lsp check [paths]        # lint .pliron/.plir files, e.g. in CI (exit 1 on errors)
 pliron-lsp check --format json  # machine-readable findings
+pliron-lsp check --roundtrip    # also check that printing and parsing agree (dialect bugs)
 pliron-lsp fmt [--check] [paths]
 ```
 

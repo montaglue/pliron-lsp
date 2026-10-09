@@ -163,6 +163,7 @@ pub fn phase_name(phase: DiagPhase) -> &'static str {
         DiagPhase::Verify => "verify",
         DiagPhase::Panic => "panic",
         DiagPhase::Lint => "lint",
+        DiagPhase::RoundTrip => "roundtrip",
     }
 }
 
