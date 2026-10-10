@@ -1,0 +1,29 @@
+# Checks `cargo xtask test-vscode`, the Docker setup for running the VS Code
+# integration tests locally without a VS Code window (CI itself runs them
+# directly under xvfb, see ci.yml). Only when that setup changes, or on
+# demand.
+name: VS Code tests in Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - editors/vscode/docker/**
+      - editors/vscode/src/test/runTest.ts
+      - xtask/**
+      - .github/workflows/vscode-docker.yml
+  pull_request:
+    paths:
+      - editors/vscode/docker/**
+      - editors/vscode/src/test/runTest.ts
+      - xtask/**
+      - .github/workflows/vscode-docker.yml
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo xtask test-vscode

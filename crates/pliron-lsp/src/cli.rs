@@ -334,3 +334,45 @@ pub fn fmt(args: &[String]) -> anyhow::Result<i32> {
     }
     Ok(i32::from(check && unformatted > 0))
 }
+
+/// `pliron-lsp cache [--clean]`: the build cache shared by the engines of
+/// all projects (see [`crate::bundle::cache_dir`]).
+pub fn cache(args: &[String]) -> anyhow::Result<i32> {
+    fn size(p: &Path) -> u64 {
+        match std::fs::symlink_metadata(p) {
+            Ok(m) if m.is_dir() => std::fs::read_dir(p)
+                .map(|es| es.flatten().map(|e| size(&e.path())).sum())
+                .unwrap_or(0),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        }
+    }
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!(
+            "usage: pliron-lsp cache [--clean]\n\nThe directory where dialect engines are built (shared by all projects;\nset with PLIRON_LSP_CACHE_DIR). --clean deletes it; it is rebuilt when needed."
+        );
+        return Ok(0);
+    }
+    let Some(dir) = crate::bundle::cache_dir() else {
+        println!("no shared cache: engines are built in each project's target directory");
+        return Ok(0);
+    };
+    let bytes = size(&dir);
+    if args.iter().any(|a| a == "--clean") {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
+        }
+        println!(
+            "removed {} ({:.1} GiB)",
+            dir.display(),
+            bytes as f64 / (1u64 << 30) as f64
+        );
+    } else {
+        println!(
+            "{} ({:.1} GiB)",
+            dir.display(),
+            bytes as f64 / (1u64 << 30) as f64
+        );
+    }
+    Ok(0)
+}

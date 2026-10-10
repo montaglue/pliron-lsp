@@ -40,7 +40,13 @@ async function main() {
   await runTests({
     extensionDevelopmentPath,
     extensionTestsPath,
-    launchArgs: [ws, "--disable-extensions", "--disable-workspace-trust"],
+    launchArgs: [
+      ws,
+      "--disable-extensions",
+      "--disable-workspace-trust",
+      // In a container VS Code runs as root (see docker/Dockerfile).
+      ...(process.env.PLIRON_TEST_NO_SANDBOX ? ["--no-sandbox", "--disable-gpu"] : []),
+    ],
     extensionTestsEnv: { PLIRON_TEST_WORKSPACE: ws },
   });
 }

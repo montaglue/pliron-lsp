@@ -103,6 +103,9 @@ fn analyze(exe: &Path, text: &str) -> pliron_lsp_protocol::AnalyzeResult {
 
 #[test]
 fn toy_dialect_bundle() {
+    // A build cache of the tests' own (shared by the projects below).
+    // SAFETY: set before this test binary starts other threads.
+    unsafe { std::env::set_var("PLIRON_LSP_CACHE_DIR", shared_target().join("cache")) };
     let (_tmp, dir) = fixture();
     let mut meta = bundle::load_metadata(&dir).expect("metadata");
     meta.target_directory = shared_target().try_into().unwrap();
@@ -116,6 +119,34 @@ fn toy_dialect_bundle() {
     assert!(need.0 >= pliron_lsp::toolchain::ENGINE_MIN, "{need:?}");
     let toolchain = pliron_lsp::toolchain::plan(&dir, need).choice;
     let exe = bundle::build(&meta, &bundle_dir, &toolchain, |e| eprintln!("{e:?}")).expect("build");
+
+    // Another project with the same pliron: the shared build cache already
+    // has the instrumented pliron, only its own crates are compiled.
+    let (_tmp2, dir2) = fixture();
+    let mut meta2 = bundle::load_metadata(&dir2).expect("metadata");
+    meta2.target_directory = dir2.join("target").try_into().unwrap();
+    let sel2 = bundle::select(&meta2).expect("selection");
+    let bundle_dir2 = bundle::generate(&meta2, &sel2).unwrap();
+    assert_ne!(bundle_dir2, bundle_dir);
+    let mut compiled = Vec::new();
+    let exe2 = bundle::build(
+        &meta2,
+        &bundle_dir2,
+        &toolchain,
+        |bundle::BuildEvent::Progress(m)| compiled.push(m),
+    )
+    .expect("build of the second project");
+    assert!(
+        compiled
+            .iter()
+            .any(|m| m.starts_with("Compiling toy-dialect")),
+        "{compiled:#?}"
+    );
+    assert!(
+        !compiled.iter().any(|m| m.starts_with("Compiling pliron ")),
+        "{compiled:#?}"
+    );
+    assert_ne!(exe2, exe);
 
     let text = std::fs::read_to_string(dir.join("sample.pliron")).unwrap();
     let r = analyze(&exe, &text);

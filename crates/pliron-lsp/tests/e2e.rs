@@ -489,3 +489,42 @@ fn workspace_rename_lenses_and_links() {
     );
     assert_eq!(def["range"]["start"], json!({ "line": 1, "character": 4 }));
 }
+
+/// An idle engine is stopped (not reported as a crash) and starts again
+/// for the next edit.
+#[test]
+fn idle_engine_stops_and_restarts() {
+    use std::time::{Duration, Instant};
+    let engine = reference_engine();
+    let mut c = Client::start(json!({ "enginePath": engine, "engineIdleTimeout": 1 }));
+    c.open_uri(URI, DEMO);
+    c.wait_diagnostics(|_| true);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = c.request("pliron/analyzerStatus", json!({}));
+        if status.as_str().unwrap().contains("stopped while idle") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine never stopped:\n{status}"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // The real parser reports the typo: the engine runs again.
+    c.change_uri(URI, 2, &DEMO.replace("llvm.add", "llvm.ad"));
+    let diags = c.wait_diagnostics(|d| {
+        d.iter().any(|x| {
+            x["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Unregistered Op llvm.ad")
+        })
+    });
+    assert!(
+        !diags
+            .iter()
+            .any(|x| x["message"].as_str().unwrap_or("").contains("crashed")),
+        "{diags:#?}"
+    );
+}

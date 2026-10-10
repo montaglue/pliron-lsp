@@ -95,6 +95,12 @@
           "default": null,
           "markdownDescription": "Use this engine binary for every document instead of building dialect engines automatically."
         },
+        "pliron.engine.idleTimeout": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "markdownDescription": "Stop a dialect engine process after this many seconds without work (it starts again when needed, in milliseconds). `0` keeps engines running."
+        },
         "pliron.bundles.enabled": {
           "type": "boolean",
           "default": true,

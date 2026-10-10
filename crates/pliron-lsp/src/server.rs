@@ -55,6 +55,9 @@ pub struct InitOptions {
     /// Report operations whose printed form does not parse back to the
     /// same IR (default: on).
     pub round_trip: Option<bool>,
+    /// Stop an engine process after this many idle seconds (default 600;
+    /// 0: never). It starts again when needed.
+    pub engine_idle_timeout: Option<u64>,
 }
 
 /// `pliron/status` notification.
@@ -429,6 +432,26 @@ impl Server {
             for f in finished {
                 self.on_finished(f);
             }
+            self.stop_idle_engines();
+        }
+    }
+
+    /// Stop engine processes that had nothing to do for a while.
+    fn stop_idle_engines(&mut self) {
+        let secs = self.opts.engine_idle_timeout.unwrap_or(600);
+        if secs == 0 {
+            return;
+        }
+        let idle = Duration::from_secs(secs);
+        let stopped: Vec<String> = self
+            .engines
+            .values_mut()
+            .filter_map(|e| e.stop_if_idle(idle).then(|| e.label.clone()))
+            .collect();
+        for label in stopped {
+            self.log(format!(
+                "stopped the {label} engine after {secs}s without work; it starts again when needed"
+            ));
         }
     }
 
@@ -1675,7 +1698,13 @@ impl Server {
                 "- **{}** (`{}`): {}",
                 e.label,
                 e.exe.display(),
-                if e.is_running() { "running" } else { "stopped" }
+                if e.is_running() {
+                    "running"
+                } else if e.idle_stopped {
+                    "stopped while idle (starts again when needed)"
+                } else {
+                    "stopped"
+                }
             );
             if let Some(i) = &e.info {
                 let crates: Vec<String> = i

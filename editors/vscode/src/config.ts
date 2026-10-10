@@ -16,6 +16,7 @@ export class Config {
     "pliron.engine.path",
     "pliron.bundles.enabled",
     "pliron.diagnostics.roundTrip",
+    "pliron.engine.idleTimeout",
   ];
 
   get serverPath(): string | undefined {
@@ -38,6 +39,10 @@ export class Config {
     return this.cfg.get<boolean>("bundles.enabled", true);
   }
 
+  get engineIdleTimeout(): number {
+    return this.cfg.get<number>("engine.idleTimeout", 600);
+  }
+
   get roundTrip(): boolean {
     return this.cfg.get<boolean>("diagnostics.roundTrip", true);
   }
@@ -51,6 +56,7 @@ export class Config {
       // and runs their build scripts / proc macros: trusted workspaces only.
       disableBundles: !this.bundlesEnabled || !vscode.workspace.isTrusted,
       roundTrip: this.roundTrip,
+      engineIdleTimeout: this.engineIdleTimeout,
     };
   }
 }

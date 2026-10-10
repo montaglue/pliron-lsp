@@ -35,6 +35,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # The engines' shared build cache, inside the directory cached below.
+  PLIRON_LSP_CACHE_DIR: ${{ github.workspace }}/target/check-pliron/cache
 
 jobs:
   check:

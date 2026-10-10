@@ -9,6 +9,10 @@
 //! * `cargo xtask install [--server] [--client]`
 //!   installs the server binaries with `cargo install` and/or the packaged
 //!   extension with `code --install-extension`.
+//! * `cargo xtask test-vscode [--bundled]`
+//!   runs the VS Code extension's integration tests in a Linux container
+//!   (Docker) on a virtual display, so no VS Code window opens on the
+//!   host. `--bundled` tests the packaged extension with its bundled server.
 //! * `cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>`
 //!   checks pliron-lsp against a pliron release line, the newest release,
 //!   the head of pliron's repository or another git branch: a tiny
@@ -19,6 +23,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, bail};
+
+/// Cargo's target directory (`CARGO_TARGET_DIR` or `<root>/target`).
+fn target_dir() -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root().join("target"))
+}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -97,12 +108,12 @@ fn dist(build: bool, target: Option<String>) -> anyhow::Result<PathBuf> {
     let (target, out, triple) = match target {
         Some(t) => {
             let triple = rust_triple(&t)?;
-            let out = root.join("target").join(triple).join("release");
+            let out = target_dir().join(triple).join("release");
             (t, out, Some(triple))
         }
         None => (
             host_target()?.to_string(),
-            root.join("target/release"),
+            target_dir().join("release"),
             None,
         ),
     };
@@ -201,7 +212,7 @@ fn check_pliron(source: &str) -> anyhow::Result<()> {
     run(cargo()
         .current_dir(&root)
         .args(["build", "-p", "pliron-lsp"]))?;
-    let server = root.join("target/debug").join(exe("pliron-lsp"));
+    let server = target_dir().join("debug").join(exe("pliron-lsp"));
 
     // Kept under target/ so that repeated runs build incrementally.
     let dir = root.join("target/check-pliron").join(&slug);
@@ -271,6 +282,51 @@ fn check_pliron(source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `cargo xtask test-vscode [--bundled]`, see the module docs.
+fn test_vscode(bundled: bool) -> anyhow::Result<()> {
+    let root = root();
+    let image = "pliron-lsp-vscode-tests";
+    run(Command::new("docker")
+        .args(["build", "--tag", image])
+        .arg(root.join("editors/vscode/docker")))?;
+    // The repository is mounted read-only and copied into a volume (with
+    // the timestamps, so builds stay incremental); the build directory,
+    // node_modules, the downloaded VS Code and the bundled server only
+    // exist in volumes, never in the host's working tree.
+    let tests = if bundled {
+        "cargo xtask dist\nPLIRON_TEST_BUNDLED=1 xvfb-run -a npm test"
+    } else {
+        "cargo build -p pliron-lsp -p pliron-lsp-engine-ref\nxvfb-run -a npm test"
+    };
+    let script = format!(
+        "set -e\n\
+         rsync -a --delete --exclude target/ --exclude .git/ --exclude node_modules/ \
+           --exclude /dist --exclude /editors/vscode/.vscode-test \
+           --exclude /editors/vscode/out --exclude /editors/vscode/server /src/ /work/\n\
+         (cd editors/vscode && npm ci --no-audit --no-fund)\n\
+         cd editors/vscode\n\
+         {tests}\n"
+    );
+    run(Command::new("docker")
+        .args(["run", "--rm", "--init"])
+        .arg("--volume")
+        .arg(format!("{}:/src:ro", root.display()))
+        .args([
+            "--volume",
+            "pliron-lsp-vscode-work:/work",
+            "--volume",
+            "pliron-lsp-vscode-target:/cargo-target",
+            "--volume",
+            "pliron-lsp-cargo-registry:/usr/local/cargo/registry",
+            "--volume",
+            "pliron-lsp-cargo-git:/usr/local/cargo/git",
+            image,
+            "bash",
+            "-c",
+            &script,
+        ]))
+}
+
 fn install(server: bool, client: bool) -> anyhow::Result<()> {
     let root = root();
     if server {
@@ -304,6 +360,7 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|i| rest.get(i + 1).cloned());
             dist(!flag("--no-build"), target).map(|_| ())
         }
+        "test-vscode" => test_vscode(flag("--bundled")),
         "check-pliron" => match rest.first() {
             Some(source) => check_pliron(source),
             None => {
@@ -319,7 +376,7 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!(
-                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]\n  cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>"
+                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]\n  cargo xtask test-vscode [--bundled]\n  cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>"
             );
             Ok(())
         }

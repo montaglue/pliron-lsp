@@ -98,6 +98,10 @@ pub struct Engine {
     pub last_error: Option<String>,
     /// Ask for the printer/parser round trip (on by default).
     pub round_trip: bool,
+    /// Last request or response, for stopping idle engines.
+    last_used: Instant,
+    /// Stopped because it was idle (it restarts on demand).
+    pub idle_stopped: bool,
 }
 
 impl Engine {
@@ -124,7 +128,26 @@ impl Engine {
             restarts: 0,
             last_error: None,
             round_trip: true,
+            last_used: Instant::now(),
+            idle_stopped: false,
         }
+    }
+
+    /// Stop the process when it has had nothing to do for `idle`; the next
+    /// request starts it again. Returns whether it was stopped.
+    pub fn stop_if_idle(&mut self, idle: Duration) -> bool {
+        if self.process.is_none()
+            || self.in_flight.is_some()
+            || !self.queue.is_empty()
+            || self.last_used.elapsed() < idle
+        {
+            return false;
+        }
+        // Its exit is not a crash: make its events stale.
+        self.generation += 1;
+        self.shutdown();
+        self.idle_stopped = true;
+        true
     }
 
     pub fn is_running(&self) -> bool {
@@ -223,6 +246,8 @@ impl Engine {
     /// Write a request to the engine. `hello` sends the handshake instead of
     /// `what`.
     fn send(&mut self, what: Pending, hello: bool) -> anyhow::Result<()> {
+        self.last_used = Instant::now();
+        self.idle_stopped = false;
         let id = self.next_id;
         self.next_id += 1;
         let body = if hello {
@@ -278,10 +303,11 @@ impl Engine {
         self.pump();
     }
 
-    /// Start the process if needed and send the next queued request.
+    /// Start the process if there is work for it, and send the next queued
+    /// request.
     fn pump(&mut self) {
         if self.process.is_none() {
-            if self.restarts > 5 {
+            if self.queue.is_empty() || self.restarts > 5 {
                 return;
             }
             if let Err(e) = self.start() {
@@ -311,6 +337,7 @@ impl Engine {
                 response,
                 ..
             } if generation == self.generation => {
+                self.last_used = Instant::now();
                 let Some(inflight) = self.in_flight.take() else {
                     return out;
                 };

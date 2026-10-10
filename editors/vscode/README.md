@@ -46,6 +46,7 @@ Clicking the status bar item opens a menu with these commands.
 | `pliron.server.extraEnv` | Extra environment variables for the server and the engine builds it runs. |
 | `pliron.engine.enabled` | Turn dialect engines off (syntax features only). |
 | `pliron.engine.path` | Use one fixed engine binary for every file. |
+| `pliron.engine.idleTimeout` | Seconds without work after which an engine process stops; it starts again when needed (default 600, `0`: never). |
 | `pliron.bundles.enabled` | Turn off automatic project engines. |
 | `pliron.diagnostics.roundTrip` | Warn about operations whose printed form does not parse back to the same IR (on by default). |
 | `pliron.trace.server` | Trace LSP traffic. |

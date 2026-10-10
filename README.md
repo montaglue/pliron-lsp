@@ -200,6 +200,19 @@ macro.
   scripts and proc macros, so in VS Code it only happens in trusted
   workspaces.
 
+**Build cache and processes**
+- Engines of all projects build in one shared cache (macOS:
+  `~/Library/Caches/pliron-lsp`, Linux: `~/.cache/pliron-lsp`, Windows:
+  `%LOCALAPPDATA%\pliron-lsp`; set `PLIRON_LSP_CACHE_DIR` to move it, or to
+  an empty value to build inside each project's `target/` instead). The
+  instrumented pliron and the engine library are compiled once per pliron
+  version and toolchain, so another project, worktree or clone only
+  compiles its own dialect crates. `pliron-lsp cache` shows its size and
+  `pliron-lsp cache --clean` deletes it.
+- An engine process stops after 10 minutes without work (VS Code:
+  `pliron.engine.idleTimeout`, `0` keeps it) and starts again, in
+  milliseconds, when needed.
+
 **Analysis scope**
 - Exact analysis is per document (pliron's one-module-per-file model);
   `@symbols` are additionally resolved across the workspace's IR files.
@@ -220,7 +233,9 @@ spike/                      MIR-interpreter feasibility study (rejected; see its
 
 `cargo test --workspace` runs the following (and `npm test` in
 `editors/vscode` runs the extension's integration tests in a downloaded
-VS Code):
+VS Code, which opens VS Code windows; `cargo xtask test-vscode [--bundled]`
+runs them in a Linux container with Docker instead, on a virtual display,
+without touching the working tree):
 - unit tests;
 - engine tests on real pliron;
 - end-to-end LSP tests against the reference engine;

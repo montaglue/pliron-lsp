@@ -55,7 +55,8 @@ fn opening_a_file_builds_the_project_engine() {
         std::env::set_var(
             "CARGO_TARGET_DIR",
             pliron_lsp::canonicalize(&shared).unwrap(),
-        )
+        );
+        std::env::set_var("PLIRON_LSP_CACHE_DIR", shared.join("cache"));
     };
 
     let tmp = tempfile::tempdir().unwrap();
