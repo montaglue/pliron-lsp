@@ -202,6 +202,22 @@ suite("pliron extension", () => {
     assert.ok(printed.includes("llvm.call @callee"), printed);
   });
 
+  test("run a pass and show the diff", async () => {
+    await vscode.window.showTextDocument(doc);
+    const r = await vscode.commands.executeCommand<{ before: string; after: string; errors: string[] }>(
+      "pliron.runPass",
+      "pliron.dce"
+    );
+    assert.ok(r, "no result");
+    assert.deepStrictEqual(r.errors, []);
+    // pliron's dce removes the unused `c = llvm.icmp ...`.
+    assert.ok(r.before.includes("llvm.icmp") && !r.after.includes("llvm.icmp"), r.after);
+    const shown = vscode.workspace.textDocuments.some(
+      (d) => d.uri.scheme === "pliron-pass" && d.uri.path.includes("after pliron.dce")
+    );
+    assert.ok(shown, "the diff is not open");
+  });
+
   test("server location", async () => {
     const api = vscode.extensions.getExtension("pliron-lsp.pliron")!.exports;
     const source = api.ctx.server?.source;

@@ -9,9 +9,10 @@
 //! |---|---|---|
 //! | Docs, completion snippets, signature help and syntax facts, e.g. for ops with a hand-written parser | [`hints!`] | immediately (read from the source) |
 //! | Highlighting of hand-written syntax | [`keyword!`], [`token!`] | after the engine rebuild |
-//! | Extra diagnostics, in the editor and in `pliron-lsp check` | [`lint!`] | after the engine rebuild |
+//! | Extra diagnostics (with quick fixes), in the editor and in `pliron-lsp check` | [`lint!`] | after the engine rebuild |
 //! | Extra hover text for operations | [`hover!`] | after the engine rebuild |
 //! | Extra inlay hints | [`inlay!`] | after the engine rebuild |
+//! | Transformations to run from the editor (**pliron: Run Pass…**, shown as a diff) | [`pass!`] | after the engine rebuild |
 //!
 //! In normal builds the macros only type-check their arguments: this crate
 //! has no dependencies and adds no code to a dialect. The engine that
@@ -55,6 +56,8 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub message: String,
     pub target: Target,
+    /// Quick fixes offered with the diagnostic.
+    pub fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
@@ -62,6 +65,94 @@ impl Diagnostic {
     pub fn at(&mut self, target: Target) -> &mut Self {
         self.target = target;
         self
+    }
+
+    /// Offer a quick fix: `edits` are applied together when the user picks
+    /// `title`.
+    ///
+    /// ```
+    /// use pliron_lsp_api::{Diagnostics, Edit, Target};
+    ///
+    /// let mut diags = Diagnostics::default();
+    /// diags
+    ///     .warning("repeats nothing")
+    ///     .fix("Repeat once", [Edit::replace_word(Target::Op, "0", "1")])
+    ///     .fix("Remove it", [Edit::remove_op()]);
+    /// assert_eq!(diags.iter().next().unwrap().fixes.len(), 2);
+    /// ```
+    pub fn fix(
+        &mut self,
+        title: impl Into<String>,
+        edits: impl IntoIterator<Item = Edit>,
+    ) -> &mut Self {
+        self.fixes.push(Fix {
+            title: title.into(),
+            edits: edits.into_iter().collect(),
+        });
+        self
+    }
+}
+
+/// A quick fix of a [`Diagnostic`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fix {
+    pub title: String,
+    pub edits: Vec<Edit>,
+}
+
+/// A text change of a [`Fix`]. Lints see the IR, not the text, so edits
+/// say what to change relative to the operation the lint was called with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Edit {
+    /// Replace the text of `target`.
+    Replace { target: Target, text: String },
+    /// Replace the first whole word `word` in the text of `target` (for
+    /// [`Target::Op`], in the operation's own text, not in its regions).
+    ReplaceWord {
+        target: Target,
+        word: String,
+        text: String,
+    },
+    /// Insert `text` before `target`.
+    InsertBefore { target: Target, text: String },
+    /// Insert `text` after `target`.
+    InsertAfter { target: Target, text: String },
+    /// Remove the whole operation, with its `;` separator.
+    RemoveOp,
+}
+
+impl Edit {
+    pub fn replace(target: Target, text: impl Into<String>) -> Edit {
+        Edit::Replace {
+            target,
+            text: text.into(),
+        }
+    }
+
+    pub fn replace_word(target: Target, word: impl Into<String>, text: impl Into<String>) -> Edit {
+        Edit::ReplaceWord {
+            target,
+            word: word.into(),
+            text: text.into(),
+        }
+    }
+
+    pub fn insert_before(target: Target, text: impl Into<String>) -> Edit {
+        Edit::InsertBefore {
+            target,
+            text: text.into(),
+        }
+    }
+
+    pub fn insert_after(target: Target, text: impl Into<String>) -> Edit {
+        Edit::InsertAfter {
+            target,
+            text: text.into(),
+        }
+    }
+
+    pub fn remove_op() -> Edit {
+        Edit::RemoveOp
     }
 }
 
@@ -77,6 +168,7 @@ impl Diagnostics {
             severity,
             message: message.into(),
             target: Target::OpName,
+            fixes: Vec::new(),
         });
         self.items.last_mut().expect("just pushed")
     }
@@ -338,6 +430,38 @@ macro_rules! inlay {
     };
 }
 
+/// Register a pass: a transformation the editor can run on a document
+/// (**pliron: Run Pass…**), showing the IR before and after it as a diff.
+/// It gets the document's top-level operation, after the document parsed
+/// and verified; any `Result<(), E>` with a displayable `E` reports
+/// failures.
+///
+/// ```
+/// use pliron::context::{Context, Ptr};
+/// use pliron::operation::Operation;
+///
+/// fn nothing(_ctx: &mut Context, _top: Ptr<Operation>) -> Result<(), String> {
+///     Ok(())
+/// }
+/// pliron_lsp_api::pass!("mydialect.nothing", "Changes nothing", nothing);
+/// ```
+#[cfg(not(feature = "engine"))]
+#[macro_export]
+macro_rules! pass {
+    ($name:literal, $description:literal, $f:path) => {
+        const _: () = {
+            #[allow(dead_code)]
+            fn check() {
+                $crate::__private::check_pass::<
+                    ::pliron::context::Context,
+                    ::pliron::context::Ptr<::pliron::operation::Operation>,
+                    _,
+                >($f);
+            }
+        };
+    };
+}
+
 /// A literal keyword parser for hand-written `Parsable` impls, like
 /// `combine::parser::char::string`, that pliron-lsp highlights as a
 /// keyword. (Declarative formats get this automatically.)
@@ -457,6 +581,32 @@ macro_rules! inlay {
 
 #[cfg(feature = "engine")]
 #[macro_export]
+macro_rules! pass {
+    ($name:literal, $description:literal, $f:path) => {
+        const _: () = {
+            #[$crate::__private::linkme::distributed_slice($crate::__private::PASSES)]
+            #[linkme(crate = $crate::__private::linkme)]
+            static HOOK: $crate::__private::PassHook = $crate::__private::PassHook {
+                name: $name,
+                description: $description,
+                run: |ctx, op| match (
+                    ctx.downcast_mut::<::pliron::context::Context>(),
+                    op.downcast_ref::<::pliron::context::Ptr<::pliron::operation::Operation>>(),
+                ) {
+                    (::core::option::Option::Some(ctx), ::core::option::Option::Some(op)) => {
+                        $crate::__private::pass_result($f(ctx, *op))
+                    }
+                    _ => ::core::result::Result::Err(::pliron::alloc::string::String::from(
+                        "pliron-lsp-api: unexpected context type",
+                    )),
+                },
+            };
+        };
+    };
+}
+
+#[cfg(feature = "engine")]
+#[macro_export]
 macro_rules! keyword {
     ($lit:expr) => {
         ::pliron::lsp::keyword($lit)
@@ -519,6 +669,21 @@ pub mod __private {
         pub run: fn(&dyn Any, &dyn Any, &mut crate::InlayHints),
     }
 
+    pub struct PassHook {
+        pub name: &'static str,
+        pub description: &'static str,
+        pub run: fn(&mut dyn Any, &dyn Any) -> Result<(), alloc::string::String>,
+    }
+
+    /// Type-checks a pass function (in builds without the engine).
+    pub fn check_pass<C, O, E: core::fmt::Display>(_: fn(&mut C, O) -> Result<(), E>) {}
+
+    pub fn pass_result<E: core::fmt::Display>(
+        r: Result<(), E>,
+    ) -> Result<(), alloc::string::String> {
+        r.map_err(|e| alloc::format!("{e}"))
+    }
+
     #[cfg(feature = "engine")]
     pub use linkme;
 
@@ -533,4 +698,8 @@ pub mod __private {
     #[cfg(feature = "engine")]
     #[linkme::distributed_slice]
     pub static INLAYS: [InlayHook];
+
+    #[cfg(feature = "engine")]
+    #[linkme::distributed_slice]
+    pub static PASSES: [PassHook];
 }

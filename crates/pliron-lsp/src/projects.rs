@@ -164,7 +164,7 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
     };
     let build = |sel: &bundle::Selection, choice: &Choice| -> anyhow::Result<PathBuf> {
         let dir = bundle::generate(&meta, sel)?;
-        bundle::build(&meta, &dir, choice, |ev| match ev {
+        bundle::build(&meta, sel, &dir, choice, |ev| match ev {
             BuildEvent::Progress(m) => progress(m),
         })
     };
@@ -217,6 +217,14 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
     };
     if let Choice::Use(name) = &choice {
         description.push_str(&format!("; built with toolchain {name}"));
+    }
+    // Keep the shared build cache from growing forever (at most daily).
+    for e in bundle::auto_gc() {
+        progress(format!(
+            "removed {} from the build cache (no longer used, {:.1} GiB)",
+            e.path.display(),
+            e.bytes as f64 / (1u64 << 30) as f64
+        ));
     }
     let mut watched = bundle::watched_dirs(&sel);
     watched.push(root.join("Cargo.toml"));

@@ -19,6 +19,12 @@ pliron-lsp-api = { workspace = true, optional = true, features = ["engine"] }
 [features]
 # Run the hooks dialects register with pliron-lsp-api.
 hooks = ["dep:pliron-lsp-api"]
+# The pliron version line (set by generated bundles; this workspace uses
+# 0.18). Code for APIs that differ between versions checks them.
+pliron_0_16 = []
+pliron_0_17 = []
+pliron_0_18 = []
+pliron_0_19 = []
 
 [dev-dependencies]
 pliron-llvm.workspace = true

@@ -5,6 +5,7 @@ import type * as lc from "vscode-languageclient/node";
 
 import type { Ctx } from "./ctx";
 import * as ext from "./lsp_ext";
+import { runPass } from "./passes";
 import { showView, ViewKind } from "./views";
 
 type Cmd = (ctx: Ctx) => (...args: unknown[]) => unknown;
@@ -37,6 +38,9 @@ export const commands: Record<string, Cmd> = {
   "pliron.viewEngineModel": view("model", true),
   "pliron.viewSyntaxTree": view("syntax", true),
   "pliron.viewPrinted": view("printed", true),
+  // An optional pass name skips the quick pick (used by tests).
+  "pliron.runPass": (ctx) => (pass?: unknown) =>
+    runPass(ctx, typeof pass === "string" ? pass : undefined),
   "pliron.showRegistry": view("registry", true),
 
   "pliron.openBundleManifest": (ctx) => async () => {
@@ -91,6 +95,7 @@ export const commands: Record<string, Cmd> = {
       { label: "$(list-tree) View Engine Model", command: "pliron.viewEngineModel" },
       { label: "$(symbol-structure) View Syntax Tree", command: "pliron.viewSyntaxTree" },
       { label: "$(output) Show Printed Form", command: "pliron.viewPrinted" },
+      { label: "$(run) Run Pass…", command: "pliron.runPass" },
       { label: "$(book) Show Dialect Registry", command: "pliron.showRegistry" },
       { label: "$(tools) Rebuild Dialect Engine", command: "pliron.rebuildEngine" },
       { label: "$(file-code) Open Generated Bundle Manifest", command: "pliron.openBundleManifest" },

@@ -9,6 +9,7 @@ use pliron::combine::{Parser, many1, parser::char::digit};
 use pliron::context::{Context, Ptr};
 use pliron::derive::{pliron_op, pliron_type};
 use pliron::identifier::Identifier;
+use pliron::linked_list::ContainsLinkedList;
 use pliron::irfmt::parsers::spaced;
 use pliron::location::{Located, Location};
 use pliron::op::{Op, OpObj};
@@ -16,7 +17,7 @@ use pliron::operation::Operation;
 use pliron::parsable::{Parsable, ParseResult, StateStream};
 use pliron::printable::{self, Printable};
 use pliron::{dict_key, input_err};
-use pliron_lsp_api::{Diagnostics, InlayHints, Target};
+use pliron_lsp_api::{Diagnostics, Edit, InlayHints, Target};
 
 /// An integer constant.
 #[pliron_op(
@@ -136,6 +137,21 @@ fn self_add(ctx: &Context, op: Ptr<Operation>, diags: &mut Diagnostics) {
 }
 pliron_lsp_api::lint!(self_add);
 
+/// `toy.repeat 0 times` does nothing; the warning offers two quick fixes.
+fn useless_repeat(ctx: &Context, op: Ptr<Operation>, diags: &mut Diagnostics) {
+    if Operation::get_op::<RepeatOp>(op, ctx).is_none() {
+        return;
+    }
+    let o = op.deref(ctx);
+    if o.attributes.get::<StringAttr>(&TOY_REPEAT_COUNT).map(|c| c.as_str()) == Some("0") {
+        diags
+            .warning("repeats nothing")
+            .fix("Repeat once", [Edit::replace_word(Target::Op, "0", "1")])
+            .fix("Remove it", [Edit::remove_op()]);
+    }
+}
+pliron_lsp_api::lint!(useless_repeat);
+
 fn use_count(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
     let o = op.deref(ctx);
     (o.get_num_results() == 1).then(|| format!("Result used {} time(s).", o.get_result(0).num_uses(ctx)))
@@ -149,3 +165,31 @@ fn unused(ctx: &Context, op: Ptr<Operation>, hints: &mut InlayHints) {
     }
 }
 pliron_lsp_api::inlay!(unused);
+
+/// A pass to run from the editor (**pliron: Run Pass…**): removes the
+/// `toy.const` operations whose result is unused.
+fn remove_dead_constants(ctx: &mut Context, top: Ptr<Operation>) -> Result<(), String> {
+    fn walk(ctx: &Context, op: Ptr<Operation>, out: &mut Vec<Ptr<Operation>>) {
+        out.push(op);
+        for r in op.deref(ctx).regions().collect::<Vec<_>>() {
+            for b in r.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+                for o in b.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+                    walk(ctx, o, out);
+                }
+            }
+        }
+    }
+    let mut ops = Vec::new();
+    walk(ctx, top, &mut ops);
+    for op in ops {
+        if Operation::get_op::<ConstOp>(op, ctx).is_some() && !op.deref(ctx).get_result(0).is_used(ctx) {
+            Operation::erase(op, ctx);
+        }
+    }
+    Ok(())
+}
+pliron_lsp_api::pass!(
+    "toy.remove-dead-constants",
+    "Removes toy.const operations whose result is unused",
+    remove_dead_constants
+);

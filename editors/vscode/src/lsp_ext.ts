@@ -48,3 +48,31 @@ export const status = new lc.NotificationType<Status>("pliron/status");
 export const analysisUpdated = new lc.NotificationType<{ uri: string }>(
   "pliron/analysisUpdated"
 );
+
+export interface PassInfo {
+  name: string;
+  description: string;
+}
+
+export interface PassList {
+  engine: string;
+  passes: PassInfo[];
+}
+
+/** The passes of the document's dialect engine. */
+export const listPasses = new lc.RequestType<DocParams, PassList, void>("pliron/listPasses");
+
+export interface RunPassParams {
+  textDocument: lc.TextDocumentIdentifier;
+  pass: string;
+}
+
+/** The IR before and after a pass, as pliron prints it. */
+export interface PassResult {
+  before?: string | null;
+  after?: string | null;
+  errors: string[];
+  elapsed_us: number;
+}
+
+export const runPass = new lc.RequestType<RunPassParams, PassResult, void>("pliron/runPass");

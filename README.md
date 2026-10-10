@@ -12,12 +12,13 @@ of your dialects drive highlighting, diagnostics, navigation and type hints.
 | Feature | Notes |
 |---|---|
 | Diagnostics | Real pliron parse and verifier errors. Parsing recovers from errors and every op and block is verified separately, so you get all errors in a file, not just the first. Undefined names are reported where they are used. |
-| Quick fixes | "Did you mean `llvm.add`?" for unknown ops, types, attributes and dialects (from the dialect sources); similar names for undefined values and labels; insert or remove `;`; insert missing brackets. |
+| Quick fixes | "Did you mean `llvm.add`?" for unknown ops, types, attributes and dialects (from the dialect sources); similar names for undefined values and labels; insert or remove `;`; insert missing brackets; and the fixes dialects attach to their own lints. |
 | Semantic highlighting | Every word is classified by what the dialect's parser actually parsed it as: op names, types, attributes, keys, format keywords, values, block labels. Words in hand-written parsers, such as `if`/`else` in `llvm.cond_br`, are recognised as keywords. |
 | Go to definition | SSA values, block labels, `@symbols`, and op, type and attribute names. Names jump **into the Rust source** of the dialect. |
 | References, highlight, rename | Values, block arguments and labels within their pliron name scope; a rename that would clash with another name of the scope is refused. `@symbols` across the workspace's IR files: the definition in the current file (or the one file defining it) and every reference to it; other files' own `@name` are left alone. |
 | Reference counts | "N references" above every `@function` (code lens), counted across the workspace; click to peek them. |
 | Source locations | `"src/kernel.rs": line: 12, column: 5` in `outlined_attributes:` (also inside `fused`/`callsite`/`name` locations) is a link to that file and position; Cmd-click or peek-definition shows the code. Relative paths are resolved against the IR file's directory and its parents, then the workspace folders. |
+| Run passes | **pliron: Run Pass…** runs one of the engine's passes (pliron's `dce`, and the passes the dialects register) on the document and shows the IR before and after it as a diff. |
 | Round-trip check | Each document without errors is printed with the dialects' own printers and parsed again; operations whose printed form does not parse, or parses into something else (a lost attribute, other types, …), get a warning that says what changed and how it was printed. These are bugs in a dialect's printer or parser. **Show Printed Form** shows the printed text. |
 | Hover | Exact value types (as printed by pliron), the defining op, op signatures and attributes, and **Rust doc comments** of ops, types and attributes. |
 | Type inlay hints | Result types that the op's syntax does not spell out, e.g. the result of `llvm.call`. |
@@ -140,9 +141,10 @@ pliron-lsp-api = { git = "https://github.com/montaglue/pliron-lsp" }
 |---|---|---|
 | `hints!` | Docs, format, completion snippet, operand names and syntax facts per op/type/attr. They override what is derived from `#[pliron_op(...)]` and doc comments, which matters most for hand-written parsers. | immediately (read from the source) |
 | `keyword!`, `token!` | Drop-in parsers for hand-written `Parsable` impls that tell the server how to highlight what they parse. | after the engine rebuild |
-| `lint!` | Extra diagnostics for each verified op; shown in the editor and by `pliron-lsp check`. | after the engine rebuild |
+| `lint!` | Extra diagnostics for each verified op, optionally with quick fixes (replace or insert text at the op, its name, results or operands; remove the op); shown in the editor and by `pliron-lsp check`. | after the engine rebuild |
 | `hover!` | Extra markdown in an op's hover. | after the engine rebuild |
 | `inlay!` | Extra inlay hints at an op, its results or its operands. | after the engine rebuild |
+| `pass!` | A transformation to run from the editor (**pliron: Run Pass…**), shown as a diff of the printed IR. | after the engine rebuild |
 
 ```rust
 use pliron::context::{Context, Ptr};
@@ -207,8 +209,11 @@ macro.
   an empty value to build inside each project's `target/` instead). The
   instrumented pliron and the engine library are compiled once per pliron
   version and toolchain, so another project, worktree or clone only
-  compiles its own dialect crates. `pliron-lsp cache` shows its size and
-  `pliron-lsp cache --clean` deletes it.
+  compiles its own dialect crates. The cache cleans itself up (at most once
+  a day): what no engine build used for 30 days is removed, and so is a
+  pliron's build directory once it outgrows 20 GiB. `pliron-lsp cache`
+  lists its entries with sizes and last use, `--gc` cleans up now, and
+  `--clean` deletes everything.
 - An engine process stops after 10 minutes without work (VS Code:
   `pliron.engine.idleTimeout`, `0` keeps it) and starts again, in
   milliseconds, when needed.

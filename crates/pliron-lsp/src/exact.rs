@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use pliron_ir_syntax::LineIndex;
 use pliron_ir_syntax::lexer::{Offset, TokenKind, lex};
 use pliron_lsp_protocol::{
-    AnalyzeResult, DiagPhase, HookSeverity, HookTarget, Model, Pos, SpanKind, ValueDef,
+    AnalyzeResult, DiagPhase, HookEdit, HookFix, HookSeverity, HookTarget, Model, Pos, SpanKind,
+    ValueDef,
 };
 
 pub type Range = (Offset, Offset);
@@ -27,6 +28,14 @@ pub struct XDiag {
     pub severity: HookSeverity,
     /// The lint hook that reported it (for [`DiagPhase::Lint`]).
     pub source: Option<String>,
+    /// Quick fixes from the lint (text edits).
+    pub fixes: Vec<XFix>,
+}
+
+#[derive(Clone, Debug)]
+pub struct XFix {
+    pub title: String,
+    pub edits: Vec<(Range, String)>,
 }
 
 /// An inlay hint from a dialect hook.
@@ -84,6 +93,57 @@ fn trim_end(text: &str, (s, mut e): Range) -> Range {
         e -= text[..e as usize].chars().next_back().unwrap().len_utf8() as Offset;
     }
     (s, e)
+}
+
+fn tk_range(t: &pliron_ir_syntax::Token) -> Range {
+    (t.start, t.end)
+}
+
+/// The text to delete to remove the statement of an op spanning `op`: with
+/// its `;` (the one after it, or for the last op of a block the one before
+/// it) and, when it is alone on its lines, the whole lines.
+pub fn remove_op_range(text: &str, (s, e): Range) -> Range {
+    let b = text.as_bytes();
+    let (s, e) = (s as usize, e as usize);
+    let mut end = e;
+    while end < b.len() && matches!(b[end], b' ' | b'\t') {
+        end += 1;
+    }
+    let mut start = s;
+    if end < b.len() && b[end] == b';' {
+        end += 1;
+        // The rest of the line, if blank.
+        let mut j = end;
+        while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\r') {
+            j += 1;
+        }
+        let line_start = text[..s].rfind('\n').map_or(0, |p| p + 1);
+        if (j >= b.len() || b[j] == b'\n') && text[line_start..s].trim().is_empty() {
+            start = line_start;
+            end = (j + 1).min(b.len());
+        }
+    } else {
+        // The last op of a block: drop the `;` before it instead.
+        let mut i = s;
+        while i > 0 && b[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        if i > 0 && b[i - 1] == b';' {
+            start = i - 1;
+        } else {
+            // The only op: its whole line(s), if alone on them.
+            let line_start = text[..s].rfind('\n').map_or(0, |p| p + 1);
+            let mut j = end;
+            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\r') {
+                j += 1;
+            }
+            if text[line_start..s].trim().is_empty() && (j >= b.len() || b[j] == b'\n') {
+                start = line_start;
+                end = (j + 1).min(b.len());
+            }
+        }
+    }
+    (start as Offset, end as Offset)
 }
 
 impl Exact {
@@ -214,6 +274,7 @@ impl Exact {
                 phase: d.phase,
                 severity: HookSeverity::Error,
                 source: None,
+                fixes: Vec::new(),
             });
         }
         // Round trip problems: at the name of the op they are about.
@@ -233,6 +294,7 @@ impl Exact {
                 phase: DiagPhase::RoundTrip,
                 severity: HookSeverity::Warning,
                 source: None,
+                fixes: Vec::new(),
             });
         }
         for d in res.hook_diags {
@@ -248,6 +310,11 @@ impl Exact {
                 phase: DiagPhase::Lint,
                 severity: d.severity,
                 source: Some(d.source),
+                fixes: d
+                    .fixes
+                    .iter()
+                    .filter_map(|f| x.fix_edits(text, &tokens, d.op, f))
+                    .collect(),
             });
         }
         for h in res.hook_hints {
@@ -262,6 +329,64 @@ impl Exact {
             });
         }
         x
+    }
+
+    /// The text edits of a lint's quick fix, or `None` if a target is not in
+    /// the text.
+    fn fix_edits(
+        &self,
+        text: &str,
+        tokens: &[pliron_ir_syntax::Token],
+        op: u32,
+        fix: &HookFix,
+    ) -> Option<XFix> {
+        let mut edits = Vec::new();
+        for e in &fix.edits {
+            edits.push(match e {
+                HookEdit::Replace { target, text: t } => {
+                    (self.target_range(op, *target)?, t.clone())
+                }
+                HookEdit::InsertBefore { target, text: t } => {
+                    let (s, _) = self.target_range(op, *target)?;
+                    ((s, s), t.clone())
+                }
+                HookEdit::InsertAfter { target, text: t } => {
+                    let (_, e) = self.target_range(op, *target)?;
+                    ((e, e), t.clone())
+                }
+                HookEdit::ReplaceWord {
+                    target,
+                    word,
+                    text: t,
+                } => {
+                    let (s, e) = self.target_range(op, *target)?;
+                    // Not inside the op's regions.
+                    let regions: Vec<Range> = self
+                        .region_spans
+                        .iter()
+                        .map(|(r, _)| *r)
+                        .filter(|(rs, re)| s <= *rs && *re <= e)
+                        .collect();
+                    let tok = tokens.iter().find(|tk| {
+                        s <= tk.start
+                            && tk.end <= e
+                            && tk.text(text) == word
+                            && !regions
+                                .iter()
+                                .any(|(rs, re)| *rs <= tk.start && tk.end <= *re)
+                    })?;
+                    ((tk_range(tok)), t.clone())
+                }
+                HookEdit::RemoveOp => (
+                    remove_op_range(text, self.op_span.get(&op)?.0),
+                    String::new(),
+                ),
+            });
+        }
+        Some(XFix {
+            title: fix.title.clone(),
+            edits,
+        })
     }
 
     /// The range of what a hook targeted, relative to op `op`.
@@ -429,6 +554,30 @@ impl Exact {
 mod tests {
     use super::*;
     use pliron_lsp_protocol::{EngineDiag, OpInfo, Span};
+
+    #[test]
+    fn removing_an_op_keeps_the_separators_right() {
+        let remove = |text: &str, op: &str| {
+            let s = text.find(op).unwrap();
+            let (a, b) = remove_op_range(text, (s as Offset, (s + op.len()) as Offset));
+            format!("{}{}", &text[..a as usize], &text[b as usize..])
+        };
+        let block = "  ^e():\n    a = t.x;\n    b = t.y;\n    t.r\n  }\n";
+        // A middle op: its line.
+        assert_eq!(
+            remove(block, "b = t.y"),
+            "  ^e():\n    a = t.x;\n    t.r\n  }\n"
+        );
+        // The last op: the `;` before it.
+        assert_eq!(
+            remove(block, "t.r"),
+            "  ^e():\n    a = t.x;\n    b = t.y\n  }\n"
+        );
+        // The only op: its line.
+        assert_eq!(remove("  ^e():\n    t.r\n  }\n", "t.r"), "  ^e():\n  }\n");
+        // Ops on one line.
+        assert_eq!(remove("{ a = t.x; t.r }", "a = t.x"), "{  t.r }");
+    }
 
     #[test]
     fn round_trip_problems_are_warnings_at_the_op_name() {

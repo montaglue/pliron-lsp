@@ -31,6 +31,7 @@ automatically.
 | `pliron: View Engine Model` | The IR as the dialect engine understood it. Updates while you type. |
 | `pliron: View Syntax Tree` | The dialect-agnostic syntax layer's view. |
 | `pliron: Show Printed Form` | The document as the dialects' printers print it (what the round-trip check parses again). |
+| `pliron: Run Pass…` | Run one of the engine's passes (pliron's `dce`, and the dialects' own) on the document and show the IR before and after it as a diff. |
 | `pliron: Show Dialect Registry` | Ops, types and attributes defined in your dialect sources, with links. |
 | `pliron: Rebuild Dialect Engine` | Force a rebuild. |
 | `pliron: Open Generated Bundle Manifest` | The generated `Cargo.toml` of the engine. |

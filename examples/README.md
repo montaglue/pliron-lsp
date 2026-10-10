@@ -71,6 +71,10 @@ open `llvm/src/kernel.rs` at that position, or peek it with Alt-F12.
      `pliron_lsp_api::token!` and `keyword!`.
    - Typing `toy.rep` completes to `toy.repeat 2 times`, from the dialect's
      `hints!`.
+   - Change `toy.repeat 3 times` to `toy.repeat 0 times`: the dialect's lint
+     warns, and its quick fixes (Cmd-.) repeat once or remove the op.
+   - **pliron: Run Pass…** → `toy.remove-dead-constants` removes the unused
+     `d = toy.const …` and shows the IR before and after as a diff.
 
 From the command palette (or by clicking the status bar item), try
 **pliron: View Engine Model**, **View Syntax Tree**, **Show Dialect

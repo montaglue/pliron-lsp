@@ -114,6 +114,27 @@ pub fn code_actions(
         let end = doc.offset(diag.range.end, enc);
         let msg = diag.message.as_str();
 
+        // Quick fixes that a dialect's lint attached to its diagnostic.
+        if let Some(x) = doc.fresh_exact() {
+            for d in x
+                .diagnostics
+                .iter()
+                .filter(|d| d.message == diag.message && doc.range(d.range, enc) == diag.range)
+            {
+                for (i, f) in d.fixes.iter().enumerate() {
+                    let edits = f
+                        .edits
+                        .iter()
+                        .map(|(r, t)| TextEdit {
+                            range: doc.range(*r, enc),
+                            new_text: t.clone(),
+                        })
+                        .collect();
+                    out.push(fix(uri, f.title.clone(), diag, edits, i == 0));
+                }
+            }
+        }
+
         // Unknown op / type / attribute / dialect names.
         if let Some((kind, name)) = unregistered(msg) {
             let kind = match kind {

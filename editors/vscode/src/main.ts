@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 import { commands } from "./commands";
 import { Config } from "./config";
 import { Ctx } from "./ctx";
+import { PASS_SCHEME, passResults } from "./passes";
 import { SCHEME, ViewProvider } from "./views";
 
 let ctx: Ctx | undefined;
@@ -29,7 +30,8 @@ export async function activate(
   const views = new ViewProvider(c);
   context.subscriptions.push(
     views,
-    vscode.workspace.registerTextDocumentContentProvider(SCHEME, views)
+    vscode.workspace.registerTextDocumentContentProvider(SCHEME, views),
+    vscode.workspace.registerTextDocumentContentProvider(PASS_SCHEME, passResults)
   );
 
   for (const [name, factory] of Object.entries(commands)) {

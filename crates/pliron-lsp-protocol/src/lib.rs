@@ -35,6 +35,8 @@ pub enum RequestBody {
     Analyze(AnalyzeParams),
     /// Which of the given names are registered in this engine?
     Probe(ProbeParams),
+    /// Run a pass on a document; answered with [`PassResult`].
+    RunPass(RunPassParams),
     /// Exit cleanly.
     Shutdown,
 }
@@ -88,6 +90,7 @@ pub enum ResponseBody {
     Hello(EngineInfo),
     Analyze(AnalyzeResult),
     Probe(ProbeParams),
+    Pass(PassResult),
     Error { message: String },
     Shutdown,
 }
@@ -109,6 +112,32 @@ pub struct EngineInfo {
     /// `"lint my_dialect::check_widths"`).
     #[serde(default)]
     pub hooks: Vec<String>,
+    /// Passes this engine can run (pliron's and the dialects').
+    #[serde(default)]
+    pub passes: Vec<PassInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PassInfo {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunPassParams {
+    pub text: String,
+    pub pass: String,
+}
+
+/// The IR before and after a pass, printed by pliron (without locations, so
+/// that the two compare well).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PassResult {
+    pub before: Option<String>,
+    pub after: Option<String>,
+    /// Why the pass could not run, or what is wrong with its result.
+    pub errors: Vec<String>,
+    pub elapsed_us: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +205,39 @@ pub struct HookDiag {
     pub message: String,
     /// The hook that reported it.
     pub source: String,
+    /// Quick fixes.
+    #[serde(default)]
+    pub fixes: Vec<HookFix>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookFix {
+    pub title: String,
+    pub edits: Vec<HookEdit>,
+}
+
+/// A change of a [`HookFix`], relative to the diagnostic's op.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "edit", rename_all = "snake_case")]
+pub enum HookEdit {
+    Replace {
+        target: HookTarget,
+        text: String,
+    },
+    ReplaceWord {
+        target: HookTarget,
+        word: String,
+        text: String,
+    },
+    InsertBefore {
+        target: HookTarget,
+        text: String,
+    },
+    InsertAfter {
+        target: HookTarget,
+        text: String,
+    },
+    RemoveOp,
 }
 
 /// An inlay hint from a dialect hook.

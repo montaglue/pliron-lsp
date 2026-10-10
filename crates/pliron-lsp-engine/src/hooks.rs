@@ -3,16 +3,16 @@
 
 use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
-use pliron_lsp_protocol::{HookDiag, HookHint};
+use pliron_lsp_protocol::{HookDiag, HookHint, PassInfo};
 
 #[cfg(feature = "hooks")]
 mod imp {
     use std::any::Any;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
-    use pliron_lsp_api::__private::{HOVERS, INLAYS, LINTS};
-    use pliron_lsp_api::{Diagnostics, InlayHints, Severity, Target};
-    use pliron_lsp_protocol::{HookSeverity, HookTarget};
+    use pliron_lsp_api::__private::{HOVERS, INLAYS, LINTS, PASSES};
+    use pliron_lsp_api::{Diagnostics, Edit, InlayHints, Severity, Target};
+    use pliron_lsp_protocol::{HookEdit, HookFix, HookSeverity, HookTarget};
 
     use super::*;
 
@@ -22,6 +22,33 @@ mod imp {
             Target::Op => HookTarget::Op,
             Target::Result(i) => HookTarget::Result { index: i as u32 },
             Target::Operand(i) => HookTarget::Operand { index: i as u32 },
+        }
+    }
+
+    fn edit(e: Edit) -> HookEdit {
+        match e {
+            Edit::Replace { target: t, text } => HookEdit::Replace {
+                target: target(t),
+                text,
+            },
+            Edit::ReplaceWord {
+                target: t,
+                word,
+                text,
+            } => HookEdit::ReplaceWord {
+                target: target(t),
+                word,
+                text,
+            },
+            Edit::InsertBefore { target: t, text } => HookEdit::InsertBefore {
+                target: target(t),
+                text,
+            },
+            Edit::InsertAfter { target: t, text } => HookEdit::InsertAfter {
+                target: target(t),
+                text,
+            },
+            Edit::RemoveOp => HookEdit::RemoveOp,
         }
     }
 
@@ -50,6 +77,14 @@ mod imp {
                     },
                     message: d.message,
                     source: h.name.to_string(),
+                    fixes: d
+                        .fixes
+                        .into_iter()
+                        .map(|f| HookFix {
+                            title: f.title,
+                            edits: f.edits.into_iter().map(edit).collect(),
+                        })
+                        .collect(),
                 });
             }
             if let Err(payload) = run {
@@ -63,6 +98,7 @@ mod imp {
                         crate::panic_message(&*payload)
                     ),
                     source: h.name.to_string(),
+                    fixes: Vec::new(),
                 });
             }
         }
@@ -103,6 +139,25 @@ mod imp {
     pub fn any() -> bool {
         !(LINTS.is_empty() && HOVERS.is_empty() && INLAYS.is_empty())
     }
+
+    pub fn pass_infos() -> Vec<PassInfo> {
+        PASSES
+            .iter()
+            .map(|p| PassInfo {
+                name: p.name.to_string(),
+                description: p.description.to_string(),
+            })
+            .collect()
+    }
+
+    pub fn run_pass(
+        name: &str,
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+    ) -> Option<Result<(), String>> {
+        let p = PASSES.iter().find(|p| p.name == name)?;
+        Some((p.run)(ctx as &mut dyn Any, &op as &dyn Any))
+    }
 }
 
 #[cfg(not(feature = "hooks"))]
@@ -124,6 +179,14 @@ mod imp {
     pub fn any() -> bool {
         false
     }
+
+    pub fn pass_infos() -> Vec<PassInfo> {
+        Vec::new()
+    }
+
+    pub fn run_pass(_: &str, _: &mut Context, _: Ptr<Operation>) -> Option<Result<(), String>> {
+        None
+    }
 }
 
-pub use imp::{any, hover, inlay, lint, names};
+pub use imp::{any, hover, inlay, lint, names, pass_infos, run_pass};

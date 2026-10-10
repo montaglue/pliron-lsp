@@ -433,8 +433,11 @@ pub struct Layout {
     pub bundle: PathBuf,
     /// Copies of the built engine binary (per project).
     pub engines: PathBuf,
-    /// `CARGO_TARGET_DIR`.
+    /// `CARGO_TARGET_DIR`: in the shared cache, one per instrumented pliron
+    /// (all projects with that pliron share it; it is removed with it).
     pub target: PathBuf,
+    /// The instrumented pliron's directory name under `vendor`.
+    pub pliron_key: String,
     /// Vendored crates, in directories named after their content.
     pub vendor: PathBuf,
     /// The engine binary's name (per project, as the build directory may be
@@ -463,22 +466,159 @@ pub fn cache_dir() -> Option<PathBuf> {
     }
 }
 
-pub fn layout(meta: &Metadata) -> Layout {
+/// The instrumented pliron's directory name: its version, and a hash of
+/// its sources and the instrumentation.
+fn pliron_key(sel: &Selection) -> anyhow::Result<String> {
+    let (_, patch) = embedded::PATCHES
+        .iter()
+        .find(|(v, _)| *v == sel.patch_version)
+        .context("missing instrumentation patch")?;
+    let source = match &sel.pliron {
+        PlironSource::Registry {
+            pliron_dir,
+            derive_dir,
+            ..
+        } => format!("{}\0{}", pliron_dir.display(), derive_dir.display()),
+        PlironSource::Git { root, .. } => root.display().to_string(),
+    };
+    let hash =
+        pliron_lsp_protocol::text_hash(&[source.as_str(), patch, DERIVE_KEYWORD_PARSER].join("\0"));
+    Ok(format!("pliron-{}-{hash:016x}", sel.pliron_version))
+}
+
+pub fn layout(meta: &Metadata, sel: &Selection) -> anyhow::Result<Layout> {
     let state = state_dir(meta);
     let shared = cache_dir();
     let root = meta.workspace_root.to_string();
-    Layout {
+    let pliron_key = pliron_key(sel)?;
+    Ok(Layout {
         bundle: state.join("bundle"),
         engines: state.join("engines"),
-        target: shared
-            .as_ref()
-            .map_or_else(|| state.join("target"), |c| c.join("target")),
+        target: shared.as_ref().map_or_else(
+            || state.join("target"),
+            |c| c.join("target").join(&pliron_key),
+        ),
         vendor: shared.map_or_else(|| state.join("vendor"), |c| c.join("vendor")),
         bin: format!(
             "pliron-lsp-engine-{:08x}",
             pliron_lsp_protocol::text_hash(&root) as u32
         ),
+        pliron_key,
+    })
+}
+
+/// Name of the file whose mtime says when a cache entry was last used.
+const LAST_USED: &str = ".last-used";
+
+/// Remove cache entries unused for this long...
+pub const CACHE_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+/// ...and build directories larger than this (cargo never deletes stale
+/// artifacts).
+pub const CACHE_MAX_TARGET: u64 = 20 << 30;
+
+fn mark_used(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join(LAST_USED), b"")?;
+    Ok(())
+}
+
+/// When a cache entry was last used.
+fn last_used(entry: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(entry.join(LAST_USED))
+        .or_else(|_| std::fs::metadata(entry))
+        .and_then(|m| m.modified())
+        .ok()
+}
+
+/// Total size of the files under `p`.
+pub fn disk_size(p: &Path) -> u64 {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(p)
+            .map(|es| es.flatten().map(|e| disk_size(&e.path())).sum())
+            .unwrap_or(0),
+        Ok(m) => m.len(),
+        Err(_) => 0,
     }
+}
+
+/// An entry of the shared cache: an instrumented pliron, an engine source
+/// version, or the build directory of an instrumented pliron.
+#[derive(Clone, Debug)]
+pub struct CacheEntry {
+    pub path: PathBuf,
+    pub bytes: u64,
+    pub last_used: Option<std::time::SystemTime>,
+}
+
+/// The entries of the cache at `cache`.
+pub fn cache_entries(cache: &Path) -> Vec<CacheEntry> {
+    let mut out = Vec::new();
+    for sub in ["vendor", "target"] {
+        let Ok(entries) = std::fs::read_dir(cache.join(sub)) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let path = e.path();
+            out.push(CacheEntry {
+                bytes: disk_size(&path),
+                last_used: last_used(&path),
+                path,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// Remove the cache entries unused for `max_age`, build directories larger
+/// than `max_target` (unless used within the last hour), and leftovers of
+/// older cache layouts. Returns what was removed.
+pub fn gc(cache: &Path, max_age: std::time::Duration, max_target: u64) -> Vec<CacheEntry> {
+    let now = std::time::SystemTime::now();
+    let age = |e: &CacheEntry| {
+        e.last_used
+            .and_then(|t| now.duration_since(t).ok())
+            .unwrap_or_default()
+    };
+    let mut removed = Vec::new();
+    for e in cache_entries(cache) {
+        let in_target = e.path.parent().is_some_and(|p| p.ends_with("target"));
+        let name = e.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let stale = age(&e) > max_age
+            // The build directory used to be shared by all plirons.
+            || (in_target && !name.starts_with("pliron-"))
+            || (in_target && e.bytes > max_target && age(&e) > std::time::Duration::from_secs(3600));
+        if !stale {
+            continue;
+        }
+        let ok = if e.path.is_dir() {
+            std::fs::remove_dir_all(&e.path).is_ok()
+        } else {
+            std::fs::remove_file(&e.path).is_ok()
+        };
+        if ok {
+            removed.push(e);
+        }
+    }
+    removed
+}
+
+/// [`gc`] of the shared cache with the default limits, at most once a day.
+pub fn auto_gc() -> Vec<CacheEntry> {
+    let Some(cache) = cache_dir() else {
+        return Vec::new();
+    };
+    let marker = cache.join(".last-gc");
+    let recent = std::fs::metadata(&marker)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
+    if recent || std::fs::create_dir_all(&cache).is_err() {
+        return Vec::new();
+    }
+    let _ = std::fs::write(&marker, b"");
+    gc(&cache, CACHE_MAX_AGE, CACHE_MAX_TARGET)
 }
 
 /// The vendored crates of a bundle.
@@ -629,6 +769,11 @@ fn engine_manifest(sel: &Selection, protocol: &Path) -> String {
         }
     };
     let cfg = format!("pliron_{}", sel.patch_version.replace('.', "_"));
+    // All version features exist; the project's is on.
+    let versions: String = supported_versions()
+        .iter()
+        .map(|v| format!("pliron_{} = []\n", v.replace('.', "_")))
+        .collect();
     // The project's own pliron-lsp-api, with its hooks turned on.
     let (api, hooks) = match &sel.api {
         Some(spec) => (
@@ -641,7 +786,7 @@ fn engine_manifest(sel: &Selection, protocol: &Path) -> String {
         None => (String::new(), ""),
     };
     format!(
-        "[package]\nname = \"pliron-lsp-engine\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\npliron = {pliron}\npliron-lsp-protocol = {{ path = {} }}\nserde_json = \"1\"\n{api}\n[features]\ndefault = [\"{cfg}\"{hooks}]\n{cfg} = []\nhooks = [{}]\n",
+        "[package]\nname = \"pliron-lsp-engine\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\npliron = {pliron}\npliron-lsp-protocol = {{ path = {} }}\nserde_json = \"1\"\n{api}\n[features]\ndefault = [\"{cfg}\"{hooks}]\n{versions}hooks = [{}]\n",
         toml_path(protocol),
         if sel.api.is_some() {
             "\"dep:pliron-lsp-api\""
@@ -787,9 +932,16 @@ pub fn state_dir(meta: &Metadata) -> PathBuf {
 /// Generate the bundle package; returns its directory.
 pub fn generate(meta: &Metadata, sel: &Selection) -> anyhow::Result<PathBuf> {
     let root = meta.workspace_root.as_std_path();
-    let layout = layout(meta);
+    let layout = layout(meta, sel)?;
     let dir = layout.bundle.clone();
     std::fs::create_dir_all(&dir)?;
+    if cache_dir().is_some() {
+        // Builds of this project before the cache was shared.
+        let state = state_dir(meta);
+        for old in [state.join("target"), dir.join("vendor")] {
+            let _ = std::fs::remove_dir_all(old);
+        }
+    }
     let hash =
         |parts: &[&str]| format!("{:016x}", pliron_lsp_protocol::text_hash(&parts.join("\0")));
 
@@ -820,26 +972,20 @@ pub fn generate(meta: &Metadata, sel: &Selection) -> anyhow::Result<PathBuf> {
     write_if_changed(&engine.join("Cargo.toml"), engine_toml.as_bytes())?;
 
     // The instrumented pliron, named after its sources and the patch.
-    let (_, patch) = embedded::PATCHES
-        .iter()
-        .find(|(v, _)| *v == sel.patch_version)
-        .context("missing instrumentation patch")?;
-    let (source, version) = match &sel.pliron {
-        PlironSource::Registry {
-            pliron_dir,
-            derive_dir,
-            ..
-        } => (
-            format!("{}\0{}", pliron_dir.display(), derive_dir.display()),
-            sel.pliron_version.clone(),
-        ),
-        PlironSource::Git { root, .. } => (root.display().to_string(), sel.pliron_version.clone()),
-    };
-    let pliron_dir = layout.vendor.join(format!(
-        "pliron-{version}-{}",
-        hash(&[&source, patch, DERIVE_KEYWORD_PARSER])
-    ));
+    let pliron_dir = layout.vendor.join(&layout.pliron_key);
     vendor_pliron(sel, &pliron_dir)?;
+    // Cache entries in use (see `gc`).
+    for used in [
+        protocol.parent(),
+        engine.parent(),
+        Some(pliron_dir.as_path()),
+        Some(layout.target.as_path()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        mark_used(used)?;
+    }
     let vendored = match &sel.pliron {
         PlironSource::Registry { .. } => Vendored {
             engine: engine.clone(),
@@ -895,12 +1041,13 @@ pub enum BuildEvent {
 /// Build the bundle and copy the engine to a unique path; returns it.
 pub fn build(
     meta: &Metadata,
+    sel: &Selection,
     bundle_dir: &Path,
     toolchain: &crate::toolchain::Choice,
     mut on_event: impl FnMut(BuildEvent),
 ) -> anyhow::Result<PathBuf> {
     let root = meta.workspace_root.as_std_path();
-    let layout = layout(meta);
+    let layout = layout(meta, sel)?;
     let mut cmd = match toolchain {
         crate::toolchain::Choice::Default => {
             Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -1149,6 +1296,50 @@ mod tests {
         for (_, p) in embedded::PATCHES {
             assert!(p.contains("+++ b/src/lsp.rs"));
         }
+    }
+
+    #[test]
+    fn cache_gc_removes_unused_large_and_legacy_entries() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let c = dir.path();
+        let entry = |sub: &str, name: &str, bytes: usize, days_ago: u64| {
+            let p = c.join(sub).join(name);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("data"), vec![0u8; bytes]).unwrap();
+            mark_used(&p).unwrap();
+            let t = SystemTime::now() - Duration::from_secs(days_ago * 24 * 3600);
+            std::fs::File::options()
+                .write(true)
+                .open(p.join(LAST_USED))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        };
+        entry("vendor", "pliron-0.18.0-aaaa", 10, 0); // in use
+        entry("vendor", "pliron-0.16.0-bbbb", 10, 40); // unused for 40 days
+        entry("target", "pliron-0.18.0-aaaa", 10, 0);
+        entry("target", "pliron-0.17.0-cccc", 5000, 2); // too large
+        entry("target", "debug", 10, 0); // the old layout (one shared dir)
+        std::fs::write(c.join("target/CACHEDIR.TAG"), "x").unwrap();
+
+        let mut removed: Vec<PathBuf> = gc(c, CACHE_MAX_AGE, 1000)
+            .into_iter()
+            .map(|e| e.path.strip_prefix(c).unwrap().to_path_buf())
+            .collect();
+        removed.sort();
+        let p = |a: &str, b: &str| Path::new(a).join(b);
+        assert_eq!(
+            removed,
+            [
+                p("target", "CACHEDIR.TAG"),
+                p("target", "debug"),
+                p("target", "pliron-0.17.0-cccc"),
+                p("vendor", "pliron-0.16.0-bbbb"),
+            ]
+        );
+        assert!(c.join("vendor/pliron-0.18.0-aaaa").exists());
+        assert!(c.join("target/pliron-0.18.0-aaaa").exists());
     }
 
     #[test]

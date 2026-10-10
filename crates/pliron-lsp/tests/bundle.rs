@@ -118,7 +118,8 @@ fn toy_dialect_bundle() {
     let need = pliron_lsp::toolchain::required(&meta, &sel);
     assert!(need.0 >= pliron_lsp::toolchain::ENGINE_MIN, "{need:?}");
     let toolchain = pliron_lsp::toolchain::plan(&dir, need).choice;
-    let exe = bundle::build(&meta, &bundle_dir, &toolchain, |e| eprintln!("{e:?}")).expect("build");
+    let exe =
+        bundle::build(&meta, &sel, &bundle_dir, &toolchain, |e| eprintln!("{e:?}")).expect("build");
 
     // Another project with the same pliron: the shared build cache already
     // has the instrumented pliron, only its own crates are compiled.
@@ -131,6 +132,7 @@ fn toy_dialect_bundle() {
     let mut compiled = Vec::new();
     let exe2 = bundle::build(
         &meta2,
+        &sel2,
         &bundle_dir2,
         &toolchain,
         |bundle::BuildEvent::Progress(m)| compiled.push(m),
@@ -213,7 +215,7 @@ fn toy_dialect_bundle() {
     let lib = dir.join("toy-dialect/src/lib.rs");
     let src = std::fs::read_to_string(&lib).unwrap();
     std::fs::write(&lib, src.replace("`value` ` = ` $0", "`show` $0")).unwrap();
-    let exe2 = bundle::build(&meta, &bundle_dir, &toolchain, |_| {}).expect("rebuild");
+    let exe2 = bundle::build(&meta, &sel, &bundle_dir, &toolchain, |_| {}).expect("rebuild");
     let r = analyze(&exe2, &text);
     assert!(
         !r.parse_errors.is_empty(),

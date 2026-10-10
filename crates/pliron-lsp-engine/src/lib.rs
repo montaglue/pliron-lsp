@@ -18,6 +18,7 @@
 
 mod analyze;
 mod hooks;
+mod passes;
 mod probe;
 mod roundtrip;
 
@@ -147,6 +148,7 @@ fn engine_info(info: &BundleInfo) -> EngineInfo {
         registrations,
         context_error,
         hooks: hooks::names(),
+        passes: passes::list(),
     }
 }
 
@@ -166,6 +168,13 @@ pub fn handle(info: &BundleInfo, req: Request) -> Response {
             Err(panic) => ResponseBody::Error {
                 message: format!("probe panicked: {panic}"),
             },
+        },
+        RequestBody::RunPass(params) => match guarded(move || passes::run(&params)) {
+            Ok(r) => ResponseBody::Pass(r),
+            Err(panic) => ResponseBody::Pass(pliron_lsp_protocol::PassResult {
+                errors: vec![format!("the pass panicked: {panic}")],
+                ..Default::default()
+            }),
         },
         RequestBody::Shutdown => ResponseBody::Shutdown,
     };

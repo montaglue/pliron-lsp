@@ -120,6 +120,32 @@ fn engine_exact_features() {
         "{printed}"
     );
 
+    // Passes: pliron's dce removes the unused `c = llvm.icmp ...`.
+    let passes = c.request(
+        "pliron/listPasses",
+        json!({ "textDocument": { "uri": URI } }),
+    );
+    assert!(
+        passes["passes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "pliron.dce"),
+        "{passes:#}"
+    );
+    let r = c.request(
+        "pliron/runPass",
+        json!({ "textDocument": { "uri": URI }, "pass": "pliron.dce" }),
+    );
+    assert_eq!(r["errors"], json!([]), "{r:#}");
+    assert!(r["before"].as_str().unwrap().contains("llvm.icmp"), "{r:#}");
+    assert!(!r["after"].as_str().unwrap().contains("llvm.icmp"), "{r:#}");
+    let r = c.request(
+        "pliron/runPass",
+        json!({ "textDocument": { "uri": URI }, "pass": "nope" }),
+    );
+    assert_eq!(r["errors"], json!(["there is no pass `nope`"]), "{r:#}");
+
     // Inlay hint for `r` (its type is not spelled out), none for `z`.
     let hints = c.request(
         "textDocument/inlayHint",

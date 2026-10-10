@@ -178,6 +178,11 @@
         "category": "pliron"
       },
       {
+        "command": "pliron.runPass",
+        "title": "Run Pass…",
+        "category": "pliron"
+      },
+      {
         "command": "pliron.showRegistry",
         "title": "Show Dialect Registry",
         "category": "pliron"
@@ -215,6 +220,10 @@
         },
         {
           "command": "pliron.viewPrinted",
+          "when": "editorLangId == pliron"
+        },
+        {
+          "command": "pliron.runPass",
           "when": "editorLangId == pliron"
         },
         {

@@ -738,7 +738,7 @@ mod tests {
     #[cfg(feature = "hooks")]
     mod hooks {
         use super::*;
-        use pliron_lsp_api::{Diagnostics, InlayHints, Target};
+        use pliron_lsp_api::{Diagnostics, Edit, InlayHints, Target};
         use pliron_lsp_protocol::{HookSeverity, HookTarget};
 
         fn is(ctx: &Context, op: Ptr<Operation>, name: &str) -> bool {
@@ -747,7 +747,10 @@ mod tests {
 
         fn unused_constants(ctx: &Context, op: Ptr<Operation>, diags: &mut Diagnostics) {
             if is(ctx, op, "builtin.constant") && !op.deref(ctx).get_result(0).is_used(ctx) {
-                diags.warning("unused constant").at(Target::Result(0));
+                diags
+                    .warning("unused constant")
+                    .at(Target::Result(0))
+                    .fix("Remove it", [Edit::remove_op()]);
             }
         }
         pliron_lsp_api::lint!(unused_constants);
@@ -804,6 +807,11 @@ mod tests {
             assert_eq!(unused.len(), 1, "{:#?}", r.hook_diags);
             assert_eq!(unused[0].severity, HookSeverity::Warning);
             assert_eq!(unused[0].target, HookTarget::Result { index: 0 });
+            assert_eq!(unused[0].fixes[0].title, "Remove it");
+            assert_eq!(
+                unused[0].fixes[0].edits,
+                [pliron_lsp_protocol::HookEdit::RemoveOp]
+            );
             let k = m.ops[unused[0].op as usize].results[0];
             assert_eq!(m.values[k as usize].given_name.as_deref(), Some("k"));
             assert!(unused[0].source.ends_with("unused_constants"));

@@ -335,44 +335,60 @@ pub fn fmt(args: &[String]) -> anyhow::Result<i32> {
     Ok(i32::from(check && unformatted > 0))
 }
 
-/// `pliron-lsp cache [--clean]`: the build cache shared by the engines of
-/// all projects (see [`crate::bundle::cache_dir`]).
+/// `pliron-lsp cache [--gc | --clean]`: the build cache shared by the
+/// engines of all projects (see [`crate::bundle::cache_dir`]).
 pub fn cache(args: &[String]) -> anyhow::Result<i32> {
-    fn size(p: &Path) -> u64 {
-        match std::fs::symlink_metadata(p) {
-            Ok(m) if m.is_dir() => std::fs::read_dir(p)
-                .map(|es| es.flatten().map(|e| size(&e.path())).sum())
-                .unwrap_or(0),
-            Ok(m) => m.len(),
-            Err(_) => 0,
-        }
-    }
+    use crate::bundle;
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!(
-            "usage: pliron-lsp cache [--clean]\n\nThe directory where dialect engines are built (shared by all projects;\nset with PLIRON_LSP_CACHE_DIR). --clean deletes it; it is rebuilt when needed."
+            "usage: pliron-lsp cache [--gc | --clean]\n\n\
+             The directory where dialect engines are built, shared by all projects\n\
+             (set it with PLIRON_LSP_CACHE_DIR). Entries unused for {} days, and build\n\
+             directories over {} GiB, are removed automatically (at most once a day).\n\n\
+             \x20 --gc     remove those now\n\
+             \x20 --clean  delete the whole cache (it is rebuilt when needed)",
+            bundle::CACHE_MAX_AGE.as_secs() / (24 * 3600),
+            bundle::CACHE_MAX_TARGET >> 30
         );
         return Ok(0);
     }
-    let Some(dir) = crate::bundle::cache_dir() else {
+    let Some(dir) = bundle::cache_dir() else {
         println!("no shared cache: engines are built in each project's target directory");
         return Ok(0);
     };
-    let bytes = size(&dir);
     if args.iter().any(|a| a == "--clean") {
+        let bytes = bundle::disk_size(&dir);
         if dir.exists() {
             std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
         }
-        println!(
-            "removed {} ({:.1} GiB)",
-            dir.display(),
-            bytes as f64 / (1u64 << 30) as f64
-        );
-    } else {
-        println!(
-            "{} ({:.1} GiB)",
-            dir.display(),
-            bytes as f64 / (1u64 << 30) as f64
-        );
+        println!("removed {} ({:.1} GiB)", dir.display(), gib(bytes));
+        return Ok(0);
+    }
+    if args.iter().any(|a| a == "--gc") {
+        let removed = bundle::gc(&dir, bundle::CACHE_MAX_AGE, bundle::CACHE_MAX_TARGET);
+        for e in &removed {
+            println!("removed {} ({:.1} GiB)", e.path.display(), gib(e.bytes));
+        }
+        let total: u64 = removed.iter().map(|e| e.bytes).sum();
+        println!("freed {:.1} GiB", gib(total));
+        return Ok(0);
+    }
+    let entries = bundle::cache_entries(&dir);
+    let total: u64 = entries.iter().map(|e| e.bytes).sum();
+    println!("{} ({:.1} GiB)", dir.display(), gib(total));
+    for e in entries {
+        let rel = e.path.strip_prefix(&dir).unwrap_or(&e.path);
+        let used = e
+            .last_used
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| match d.as_secs() / (24 * 3600) {
+                0 => "used today".to_string(),
+                1 => "used 1 day ago".to_string(),
+                n => format!("used {n} days ago"),
+            })
+            .unwrap_or_default();
+        println!("  {:<48} {:>7.2} GiB  {used}", rel.display(), gib(e.bytes));
     }
     Ok(0)
 }

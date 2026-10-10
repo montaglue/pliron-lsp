@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Sender;
 use lsp_types::Url;
 use pliron_lsp_protocol::{
-    AnalyzeParams, AnalyzeResult, EngineInfo, PROTOCOL_VERSION, ProbeParams, Request, RequestBody,
-    Response, ResponseBody, VerifyMode, decode_payload, encode_line,
+    AnalyzeParams, AnalyzeResult, EngineInfo, PROTOCOL_VERSION, PassResult, ProbeParams, Request,
+    RequestBody, Response, ResponseBody, RunPassParams, VerifyMode, decode_payload, encode_line,
 };
 
 /// Messages from engine I/O threads to the main loop.
@@ -52,6 +52,16 @@ pub enum Finished {
         result: Box<AnalyzeResult>,
     },
     Probe(ProbeParams),
+    /// A pass ran (for the LSP request `request`).
+    Pass {
+        request: lsp_server::RequestId,
+        result: Box<PassResult>,
+    },
+    /// The engine died or timed out while running a pass.
+    PassFailed {
+        request: lsp_server::RequestId,
+        message: String,
+    },
     /// The engine died or timed out while analyzing `uri`.
     Failed {
         uri: Option<Url>,
@@ -61,8 +71,18 @@ pub enum Finished {
 
 #[derive(Clone, Debug)]
 enum Pending {
-    Analyze { uri: Url, text: String, hash: u64 },
+    Analyze {
+        uri: Url,
+        text: String,
+        hash: u64,
+    },
     Probe(ProbeParams),
+    /// For the LSP request `request` (answered when the engine is done).
+    RunPass {
+        request: lsp_server::RequestId,
+        text: String,
+        pass: String,
+    },
 }
 
 struct InFlight {
@@ -265,6 +285,10 @@ impl Engine {
                     round_trip: self.round_trip,
                 }),
                 Pending::Probe(p) => RequestBody::Probe(p.clone()),
+                Pending::RunPass { text, pass, .. } => RequestBody::RunPass(RunPassParams {
+                    text: text.clone(),
+                    pass: pass.clone(),
+                }),
             }
         };
         let proc = self
@@ -295,6 +319,16 @@ impl Engine {
         self.queue
             .retain(|p| !matches!(p, Pending::Analyze { uri: u, .. } if *u == uri));
         self.queue.push_back(Pending::Analyze { uri, text, hash });
+        self.pump();
+    }
+
+    /// Run `pass` on `text`, for the LSP request `request`.
+    pub fn run_pass(&mut self, request: lsp_server::RequestId, text: String, pass: String) {
+        self.queue.push_back(Pending::RunPass {
+            request,
+            text,
+            pass,
+        });
         self.pump();
     }
 
@@ -363,6 +397,14 @@ impl Engine {
                         }
                     }
                     ResponseBody::Probe(p) => out.push(Finished::Probe(p)),
+                    ResponseBody::Pass(result) => {
+                        if let Pending::RunPass { request, .. } = inflight.what {
+                            out.push(Finished::Pass {
+                                request,
+                                result: Box::new(result),
+                            });
+                        }
+                    }
                     ResponseBody::Error { message } => {
                         out.push(Finished::Failed { uri: None, message })
                     }
@@ -371,19 +413,11 @@ impl Engine {
             }
             EngineEvent::Exited { generation, .. } if generation == self.generation => {
                 let tail = self.stderr_tail();
-                let uri = match self.in_flight.take().map(|i| i.what) {
-                    Some(Pending::Analyze { uri, hash, .. }) => {
-                        self.poisoned.insert(hash);
-                        Some(uri)
-                    }
-                    _ => None,
-                };
+                let message = format!("the dialect engine crashed\n{tail}");
+                let what = self.in_flight.take().map(|i| i.what);
                 self.kill();
                 self.restarts += 1;
-                out.push(Finished::Failed {
-                    uri,
-                    message: format!("the dialect engine crashed\n{tail}"),
-                });
+                out.push(self.failed(what, message));
             }
             _ => {}
         }
@@ -391,29 +425,44 @@ impl Engine {
         out
     }
 
-    /// Kill the engine if the current request takes too long.
+    /// What to report when the engine dies or hangs during `what`.
+    fn failed(&mut self, what: Option<Pending>, message: String) -> Finished {
+        match what {
+            Some(Pending::Analyze { uri, hash, .. }) => {
+                self.poisoned.insert(hash);
+                Finished::Failed {
+                    uri: Some(uri),
+                    message,
+                }
+            }
+            Some(Pending::RunPass { request, .. }) => Finished::PassFailed { request, message },
+            _ => Finished::Failed { uri: None, message },
+        }
+    }
+
+    /// Kill the engine if the current request takes too long (passes may
+    /// take longer than analyses).
     pub fn check_timeout(&mut self) -> Option<Finished> {
         let inflight = self.in_flight.as_ref()?;
-        if inflight.started.elapsed() < self.timeout {
+        let limit = match inflight.what {
+            Pending::RunPass { .. } => self.timeout * 6,
+            _ => self.timeout,
+        };
+        if inflight.started.elapsed() < limit {
             return None;
         }
-        let uri = match &inflight.what {
-            Pending::Analyze { uri, hash, .. } => {
-                self.poisoned.insert(*hash);
-                Some(uri.clone())
-            }
-            _ => None,
-        };
         let tail = self.stderr_tail();
+        let what = self.in_flight.take().map(|i| i.what);
         self.kill();
-        self.pump();
-        Some(Finished::Failed {
-            uri,
-            message: format!(
-                "the dialect engine did not answer within {}s (a dialect parser may be looping)\n{tail}",
-                self.timeout.as_secs()
+        let finished = self.failed(
+            what,
+            format!(
+                "the dialect engine did not answer within {}s (a dialect parser or pass may be looping)\n{tail}",
+                limit.as_secs()
             ),
-        })
+        );
+        self.pump();
+        Some(finished)
     }
 
     pub fn shutdown(&mut self) {

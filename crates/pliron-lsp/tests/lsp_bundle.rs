@@ -169,6 +169,78 @@ fn opening_a_file_builds_the_project_engine() {
         "{repeat:#}"
     );
 
+    // A lint's quick fixes: `toy.repeat 0 times`.
+    let zero = text.replace("toy.repeat 3 times", "toy.repeat 0 times");
+    c.change_uri(&uri, 2, &zero);
+    let diags = c.wait_diagnostics(|d| d.iter().any(|x| x["message"] == "repeats nothing"));
+    let diag = diags
+        .iter()
+        .find(|x| x["message"] == "repeats nothing")
+        .unwrap()
+        .clone();
+    let actions = c.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": diag["range"], "context": { "diagnostics": [diag] } }),
+    );
+    let action = |title: &str| {
+        actions
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["title"] == title)
+            .unwrap_or_else(|| panic!("no `{title}` in {actions:#}"))["edit"]["changes"][&uri][0]
+            .clone()
+    };
+    let mut zero_at = pos_of(&zero, "toy.repeat 0");
+    zero_at["character"] =
+        json!(zero_at["character"].as_u64().unwrap() + "toy.repeat ".len() as u64);
+    let once = action("Repeat once");
+    assert_eq!(once["newText"], "1", "{once:#}");
+    assert_eq!(once["range"]["start"], zero_at, "{once:#}");
+    let remove = action("Remove it");
+    let line = pos_of(&zero, "toy.repeat 0")["line"].as_u64().unwrap();
+    assert_eq!(remove["newText"], "");
+    assert_eq!(
+        remove["range"]["start"],
+        json!({ "line": line, "character": 0 }),
+        "{remove:#}"
+    );
+    assert_eq!(
+        remove["range"]["end"],
+        json!({ "line": line + 1, "character": 0 }),
+        "{remove:#}"
+    );
+    c.change_uri(&uri, 3, &text);
+
+    // A dialect's pass, run from the editor: `d` is an unused toy.const.
+    let passes = c.request(
+        "pliron/listPasses",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let names: Vec<&str> = passes["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"toy.remove-dead-constants") && names.contains(&"pliron.dce"),
+        "{passes:#}"
+    );
+    let r = c.request(
+        "pliron/runPass",
+        json!({ "textDocument": { "uri": uri }, "pass": "toy.remove-dead-constants" }),
+    );
+    assert_eq!(r["errors"], json!([]), "{r:#}");
+    assert!(
+        r["before"].as_str().unwrap().contains("toy.num <32>"),
+        "{r:#}"
+    );
+    assert!(
+        !r["after"].as_str().unwrap().contains("toy.num <32>"),
+        "{r:#}"
+    );
+
     // Change the dialect: `toy.print value = c` becomes `toy.print show c`.
     let lib = dir.join("toy-dialect/src/lib.rs");
     let src = std::fs::read_to_string(&lib).unwrap();
@@ -187,7 +259,7 @@ fn opening_a_file_builds_the_project_engine() {
     // ...and the new one is accepted.
     c.change_uri(
         &uri,
-        2,
+        4,
         &text.replace("toy.print value = c", "toy.print show c"),
     );
     c.wait_diagnostics(|d| !d.is_empty() && !d.iter().any(is_error));

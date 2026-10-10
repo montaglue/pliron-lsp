@@ -838,6 +838,8 @@ impl Server {
                 self.refresh_code_lenses();
             }
             Finished::Probe(_) => {}
+            Finished::Pass { request, result } => self.reply(request, *result),
+            Finished::PassFailed { request, message } => self.reply_err(request, message),
             Finished::Failed { uri, message } => {
                 self.log(message.clone());
                 if let Some(uri) = uri
@@ -1117,6 +1119,13 @@ impl Server {
 
     fn on_request(&mut self, req: Request) {
         let id = req.id.clone();
+        // Answered when the engine is done (see `Finished::Pass`).
+        if req.method == "pliron/runPass" {
+            if let Err(e) = self.start_pass(req) {
+                self.reply_err(id, e.to_string());
+            }
+            return;
+        }
         let result = self.handle_request(req);
         match result {
             Ok(v) => self.reply(id, v),
@@ -1128,6 +1137,31 @@ impl Server {
         self.docs
             .get(uri)
             .ok_or_else(|| anyhow::anyhow!("unknown document {uri}"))
+    }
+
+    /// The engine of a document, started (for its passes).
+    fn engine_of(&mut self, uri: &Url) -> anyhow::Result<&mut Engine> {
+        let key = self
+            .engine_key(uri)
+            .ok_or_else(|| anyhow::anyhow!("no dialect engine serves this document"))?;
+        self.engine_mut(&key)
+            .ok_or_else(|| anyhow::anyhow!("no dialect engine serves this document"))
+    }
+
+    /// `pliron/runPass {textDocument, pass}`: queue the pass on the
+    /// document's engine.
+    fn start_pass(&mut self, req: Request) -> anyhow::Result<()> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params {
+            text_document: lsp_types::TextDocumentIdentifier,
+            pass: String,
+        }
+        let p: Params = serde_json::from_value(req.params)?;
+        let text = self.doc(&p.text_document.uri)?.text.clone();
+        self.engine_of(&p.text_document.uri)?
+            .run_pass(req.id, text, p.pass);
+        Ok(())
     }
 
     fn handle_request(&mut self, req: Request) -> anyhow::Result<Value> {
@@ -1534,6 +1568,18 @@ impl Server {
                     text_document: None,
                 });
                 Value::String(self.analyzer_status(p.text_document.map(|t| t.uri)))
+            }
+            "pliron/listPasses" => {
+                let p: DocParams = serde_json::from_value(req.params)?;
+                let uri = p
+                    .text_document
+                    .ok_or_else(|| anyhow::anyhow!("missing textDocument"))?
+                    .uri;
+                let engine = self.engine_of(&uri)?;
+                let Some(info) = &engine.info else {
+                    anyhow::bail!("the dialect engine is not running yet; try again in a moment");
+                };
+                serde_json::json!({ "engine": engine.label, "passes": info.passes })
             }
             "pliron/viewEngineModel"
             | "pliron/viewSyntaxTree"
