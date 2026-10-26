@@ -1030,6 +1030,13 @@ mod tests {
     }
 
     #[test]
+    fn store_arrow_is_not_an_unclosed_bracket() {
+        let src = "builtin.module @m {\n^e():\n  t.f {\n  ^b():\n    llvm.store *p <- v;\n    t.r\n  };\n  t.r\n}\n";
+        let tree = parse(src);
+        assert!(tree.errors.is_empty(), "{:?}", tree.errors);
+    }
+
+    #[test]
     fn unclosed_region_reported() {
         let src = "builtin.module @m {\n^e():\n  t.r\n";
         let tree = parse(src);

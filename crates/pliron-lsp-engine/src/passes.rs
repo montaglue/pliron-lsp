@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
-use pliron::location::{Located, Location};
+// pliron 0.20 made `loc`/`set_loc` inherent methods.
+#[cfg(not(feature = "pliron_0_20"))]
+use pliron::location::Located;
+use pliron::location::Location;
 use pliron::lsp::{RecordOptions, parse_recorded};
 use pliron::operation::{Operation, verify_operation};
 use pliron::printable::Printable;

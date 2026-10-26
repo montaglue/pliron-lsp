@@ -14,7 +14,10 @@ use pliron::combine::stream::position::SourcePosition;
 use pliron::common_traits::Named;
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
-use pliron::location::{Located, Location};
+// pliron 0.20 made `loc`/`set_loc` inherent methods.
+#[cfg(not(feature = "pliron_0_20"))]
+use pliron::location::Located;
+use pliron::location::Location;
 use pliron::lsp::{Event, RecordOptions, parse_recorded};
 use pliron::op::{op_cast, op_impls};
 use pliron::operation::{Operation, verify_operation};
@@ -224,7 +227,7 @@ fn verify_all(top: Ptr<Operation>, ctx: &Context) -> (Vec<EngineDiag>, HashSet<P
     // Innermost first, so that an error is attributed to the deepest entity
     // reporting it.
     for op in ops.iter().rev() {
-        let loc = op.deref(ctx).loc();
+        let loc = op.deref(ctx).loc().clone();
         match catch_unwind(AssertUnwindSafe(|| op.deref(ctx).verify(ctx))) {
             Ok(Ok(())) => continue,
             Ok(Err(e)) => push(loc_pos(&e.loc).or(loc_pos(&loc)), e.err.to_string()),
@@ -236,7 +239,7 @@ fn verify_all(top: Ptr<Operation>, ctx: &Context) -> (Vec<EngineDiag>, HashSet<P
         failed.insert(*op);
     }
     for b in blocks.iter().rev() {
-        let loc = b.deref(ctx).loc();
+        let loc = b.deref(ctx).loc().clone();
         match catch_unwind(AssertUnwindSafe(|| b.deref(ctx).verify(ctx))) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => push(loc_pos(&e.loc).or(loc_pos(&loc)), e.err.to_string()),

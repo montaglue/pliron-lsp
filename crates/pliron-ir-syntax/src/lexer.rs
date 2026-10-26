@@ -24,6 +24,9 @@ pub enum TokenKind {
     String,
     /// `->`
     Arrow,
+    /// `<-` (as in `llvm.store *p <- v`), so that it is not an unclosed `<`.
+    /// `<-1` stays `<` and a number.
+    LeftArrow,
     /// One of `{}()[]<>,;:=*?|+-!@#$%&/\~^.`
     Punct(char),
     /// Anything else.
@@ -173,6 +176,14 @@ impl Lexer<'_> {
             if c == '-' && self.peek_at(1) == Some('>') {
                 self.pos += 2;
                 self.push(TokenKind::Arrow, start);
+                continue;
+            }
+            if c == '<'
+                && self.peek_at(1) == Some('-')
+                && !self.peek_at(2).is_some_and(|d| d.is_ascii_digit())
+            {
+                self.pos += 2;
+                self.push(TokenKind::LeftArrow, start);
                 continue;
             }
             self.pos += c.len_utf8();
@@ -335,6 +346,27 @@ mod tests {
         let (toks, errs) = lex("\"open");
         assert_eq!(toks.len(), 1);
         assert_eq!(errs.len(), 1);
+    }
+
+    #[test]
+    fn left_arrow_and_negative_numbers() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("llvm.store *p <- v; <-1: i64>"),
+            vec![
+                (QualName, "llvm.store"),
+                (Punct('*'), "*"),
+                (Ident, "p"),
+                (LeftArrow, "<-"),
+                (Ident, "v"),
+                (Punct(';'), ";"),
+                (Punct('<'), "<"),
+                (Number, "-1"),
+                (Punct(':'), ":"),
+                (Ident, "i64"),
+                (Punct('>'), ">"),
+            ]
+        );
     }
 
     #[test]

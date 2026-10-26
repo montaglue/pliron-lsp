@@ -1058,27 +1058,25 @@ pub fn build(
             c
         }
     };
-    let mut child = cmd
-        .args([
-            "build",
-            "--bin",
-            layout.bin.as_str(),
-            "--message-format=json",
-        ])
-        .arg("--manifest-path")
-        .arg(bundle_dir.join("Cargo.toml"))
-        // The project's directory decides the cargo configuration, and the
-        // toolchain unless one is given (see `toolchain`).
-        .current_dir(root)
-        .env("CARGO_TARGET_DIR", &layout.target)
-        .env("CARGO_TERM_COLOR", "never")
-        .env("PLIRON_LSP_ENGINE_SRC_HASH", engine_src_hash())
-        .env_remove("RUSTC_WRAPPER")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("cannot run cargo")?;
+    cmd.args([
+        "build",
+        "--bin",
+        layout.bin.as_str(),
+        "--message-format=json",
+    ])
+    .arg("--manifest-path")
+    .arg(bundle_dir.join("Cargo.toml"))
+    // The project's directory decides the cargo configuration, and the
+    // toolchain unless one is given (see `toolchain`).
+    .current_dir(root)
+    .env("CARGO_TARGET_DIR", &layout.target)
+    .env("CARGO_TERM_COLOR", "never")
+    .env("PLIRON_LSP_ENGINE_SRC_HASH", engine_src_hash())
+    .env_remove("RUSTC_WRAPPER")
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    let mut child = crate::builds::spawn(&mut cmd).context("cannot run cargo")?;
 
     let stderr = child.stderr.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1292,7 +1290,7 @@ mod tests {
         let names: Vec<&str> = embedded::FILES.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"pliron-lsp-engine/src/lib.rs"));
         assert!(names.contains(&"pliron-lsp-protocol/src/lib.rs"));
-        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18", "0.19"]);
+        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18", "0.19", "0.20"]);
         for (_, p) in embedded::PATCHES {
             assert!(p.contains("+++ b/src/lsp.rs"));
         }

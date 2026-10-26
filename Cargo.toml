@@ -33,6 +33,7 @@ anyhow = "1"
 cargo_metadata = "0.19"
 crossbeam-channel = "0.5"
 expect-test = "1.5"
+libc = "0.2"
 lsp-server = "0.7.9"
 lsp-types = "=0.95.1"
 proc-macro2 = { version = "1", features = ["span-locations"] }

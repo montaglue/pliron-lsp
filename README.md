@@ -175,7 +175,7 @@ macro.
 ## Requirements and limitations
 
 **Supported projects**
-- Project engines are built for pliron **0.16, 0.17, 0.18 and 0.19**, from crates.io
+- Project engines are built for pliron **0.16, 0.17, 0.18, 0.19 and 0.20**, from crates.io
   or from a git dependency: the project's own pliron source is instrumented
   with the matching patch from [third_party/patches](third_party/patches).
   pliron as a local `path` dependency is not supported (cargo cannot
@@ -230,7 +230,7 @@ crates/pliron-ir-syntax     dialect-agnostic syntax layer
 crates/pliron-lsp-engine    engine library (parse/verify/model with instrumented pliron)
 crates/pliron-lsp-engine-ref  reference engine binary
 crates/pliron-lsp-protocol  frontend <-> engine wire protocol
-third_party/                instrumentation patches (pliron 0.16-0.19) + instrumented pliron 0.18.0
+third_party/                instrumentation patches (pliron 0.16-0.20) + instrumented pliron 0.18.0
 editors/vscode              VS Code extension (bundles the server; `npm test` runs it in VS Code)
 xtask/                      `cargo xtask dist` / `install` / `check-pliron`
 spike/                      MIR-interpreter feasibility study (rejected; see its README)

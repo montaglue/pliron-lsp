@@ -157,6 +157,17 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
     if let Some(note) = &plan.note {
         progress(note.clone());
     }
+    // Another process (editor window, `pliron-lsp check`) may be building
+    // this engine; its result is reused below, as an up-to-date build.
+    let _lock = match crate::builds::lock_project(&bundle::state_dir(&meta), &|pid| {
+        progress(match pid {
+            Some(pid) => format!("waiting for pliron-lsp (pid {pid}) building this engine"),
+            None => "waiting for another pliron-lsp building this engine".into(),
+        })
+    }) {
+        Ok(l) => l,
+        Err(e) => return Outcome::Failed(format!("cannot lock the engine build: {e}")),
+    };
     progress(format!("building dialect engine ({description})"));
     let dir = match bundle::generate(&meta, &sel) {
         Ok(d) => d,
@@ -171,6 +182,7 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
     let mut choice = plan.choice.clone();
     let exe = match build(&sel, &choice) {
         Ok(exe) => exe,
+        Err(_) if crate::builds::cancelled() => return Outcome::Failed("cancelled".into()),
         Err(first) => {
             let first = format!("{first:#}");
             let mut exe = None;
@@ -192,6 +204,7 @@ pub fn run(root: &Path, progress: &dyn Fn(String), index: &dyn Fn(&Path, &[PathB
             // build here; the dialects themselves rarely need them.
             let exe = match exe {
                 Some(exe) => Ok(exe),
+                None if crate::builds::cancelled() => return Outcome::Failed("cancelled".into()),
                 None => {
                     progress("retrying with minimal features".into());
                     build(&bundle::minimal_features(&sel), &choice)

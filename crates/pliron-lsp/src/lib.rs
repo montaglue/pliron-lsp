@@ -6,6 +6,7 @@
 //! (`pliron-ir-syntax`) answers instantly and whenever no engine result for
 //! the current text is available.
 
+pub mod builds;
 pub mod bundle;
 pub mod cli;
 pub mod document;
@@ -37,7 +38,10 @@ pub fn canonicalize(path: &std::path::Path) -> std::io::Result<std::path::PathBu
 /// Run the server on stdin/stdout.
 pub fn run_stdio() -> anyhow::Result<()> {
     let (connection, io_threads) = lsp_server::Connection::stdio();
-    server::run(connection)?;
+    let result = server::run(connection);
+    // Engine builds still running would be orphaned.
+    builds::cancel_all();
+    result?;
     io_threads.join()?;
     Ok(())
 }

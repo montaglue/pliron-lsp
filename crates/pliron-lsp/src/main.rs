@@ -1,5 +1,6 @@
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    pliron_lsp::builds::install_signal_handlers();
     match args.first().map(String::as_str) {
         Some("--version" | "-V") => {
             println!("pliron-lsp {}", env!("CARGO_PKG_VERSION"));

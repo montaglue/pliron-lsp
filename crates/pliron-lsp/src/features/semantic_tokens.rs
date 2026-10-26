@@ -214,7 +214,7 @@ fn exact_tokens(doc: &Document) -> Option<Vec<Tok>> {
                 ty: 10,
                 mods: 0,
             }),
-            TokenKind::Arrow => out.push(Tok {
+            TokenKind::Arrow | TokenKind::LeftArrow => out.push(Tok {
                 start: s,
                 end: e,
                 ty: 12,
@@ -338,7 +338,7 @@ fn syntax_tokens(doc: &Document) -> Vec<Tok> {
                 ty: 10,
                 mods: 0,
             }),
-            (TokenKind::Arrow, _) => out.push(Tok {
+            (TokenKind::Arrow | TokenKind::LeftArrow, _) => out.push(Tok {
                 start: s,
                 end: e,
                 ty: 12,

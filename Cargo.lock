@@ -609,6 +609,7 @@ dependencies = [
  "cargo_metadata",
  "crossbeam-channel",
  "expect-test",
+ "libc",
  "lsp-server",
  "lsp-types",
  "pliron-ir-syntax",

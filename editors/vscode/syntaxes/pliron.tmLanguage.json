@@ -55,7 +55,7 @@
     },
     "op": {
       "comment": "results = dialect.op at the start of a statement",
-      "match": "(?:^|(?<=[;{]))\\s*((?:[\\p{L}_][\\p{L}\\p{N}_]*\\s*,\\s*)*[\\p{L}_][\\p{L}\\p{N}_]*)?\\s*(=)?\\s*([\\p{L}_][\\p{L}\\p{N}_]*)(\\.)([\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*)",
+      "match": "(?:^|(?<=[;{]))\\s*(?:((?:[\\p{L}_][\\p{L}\\p{N}_]*\\s*,\\s*)*[\\p{L}_][\\p{L}\\p{N}_]*)\\s*(=)\\s*)?([\\p{L}_][\\p{L}\\p{N}_]*)(\\.)([\\p{L}_][\\p{L}\\p{N}_]*(?:\\.[\\p{L}_][\\p{L}\\p{N}_]*)*)",
       "captures": {
         "1": {
           "name": "variable.other.definition.pliron"
@@ -79,7 +79,7 @@
       "begin": "^\\s*(\\^[\\p{L}_][\\p{L}\\p{N}_]*)\\s*(\\()",
       "beginCaptures": {
         "1": {
-          "name": "entity.name.label.pliron"
+          "name": "constant.language.label.pliron"
         },
         "2": {
           "name": "punctuation.section.parens.begin.pliron"
@@ -115,7 +115,7 @@
       ]
     },
     "block-label": {
-      "name": "entity.name.label.pliron",
+      "name": "constant.language.label.pliron",
       "match": "\\^[\\p{L}_][\\p{L}\\p{N}_]*"
     },
     "symbol": {

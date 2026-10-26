@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pliron: ${{ fromJSON(github.event.schedule == '30 4 * * *' && '["head", "latest"]' || '["0.16", "0.17", "0.18", "0.19", "latest", "head"]') }}
+        pliron: ${{ fromJSON(github.event.schedule == '30 4 * * *' && '["head", "latest"]' || '["0.16", "0.17", "0.18", "0.19", "0.20", "latest", "head"]') }}
     runs-on: ubuntu-latest
     # Unreleased pliron must not block pull requests; scheduled runs report it.
     continue-on-error: ${{ matrix.pliron == 'head' && github.event_name != 'schedule' }}

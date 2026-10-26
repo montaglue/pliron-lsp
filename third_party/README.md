@@ -1,7 +1,7 @@
 # Instrumented pliron
 
-`patches/pliron-<version>.patch` instrument pliron 0.16, 0.17, 0.18 and
-0.19. When pliron-lsp builds a dialect engine for a project, it copies the
+`patches/pliron-<version>.patch` instrument pliron 0.16, 0.17, 0.18, 0.19 and
+0.20. When pliron-lsp builds a dialect engine for a project, it copies the
 project's own pliron source (crates.io or a git checkout), applies the
 patch for its version line with a built-in fuzzy patcher, and points the
 engine at the result with `[patch]`. The patches are embedded in the
