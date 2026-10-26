@@ -45,7 +45,7 @@ suite("pliron extension", () => {
   suiteSetup(async () => {
     doc = await vscode.workspace.openTextDocument(docUri);
     await vscode.window.showTextDocument(doc);
-    const ext = vscode.extensions.getExtension("pliron-lsp.pliron");
+    const ext = vscode.extensions.getExtension("montaglue.pliron");
     assert.ok(ext, "extension not found");
     await ext.activate();
     assert.strictEqual(doc.languageId, "pliron");
@@ -219,7 +219,7 @@ suite("pliron extension", () => {
   });
 
   test("server location", async () => {
-    const api = vscode.extensions.getExtension("pliron-lsp.pliron")!.exports;
+    const api = vscode.extensions.getExtension("montaglue.pliron")!.exports;
     const source = api.ctx.server?.source;
     if (process.env.PLIRON_TEST_BUNDLED) {
       assert.strictEqual(source, "bundled");

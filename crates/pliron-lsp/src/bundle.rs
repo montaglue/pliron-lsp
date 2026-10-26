@@ -1290,7 +1290,10 @@ mod tests {
         let names: Vec<&str> = embedded::FILES.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"pliron-lsp-engine/src/lib.rs"));
         assert!(names.contains(&"pliron-lsp-protocol/src/lib.rs"));
-        assert_eq!(supported_versions(), ["0.16", "0.17", "0.18", "0.19", "0.20"]);
+        assert_eq!(
+            supported_versions(),
+            ["0.16", "0.17", "0.18", "0.19", "0.20"]
+        );
         for (_, p) in embedded::PATCHES {
             assert!(p.contains("+++ b/src/lsp.rs"));
         }

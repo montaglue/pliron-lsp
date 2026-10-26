@@ -5,3 +5,5 @@ tsconfig.json
 .vscode-test/**
 test-fixtures/**
 node_modules/**/test/**
+docker/**
+.vscode/**

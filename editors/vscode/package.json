@@ -3,8 +3,13 @@
   "displayName": "pliron IR",
   "description": "pliron IR support powered by pliron-lsp: exact diagnostics, highlighting, navigation and type hints from your project's own dialects — no setup",
   "version": "0.1.0",
-  "publisher": "pliron-lsp",
+  "publisher": "montaglue",
   "license": "Apache-2.0",
+  "preview": true,
+  "homepage": "https://github.com/montaglue/pliron-lsp#readme",
+  "bugs": {
+    "url": "https://github.com/montaglue/pliron-lsp/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

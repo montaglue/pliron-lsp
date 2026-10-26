@@ -1,6 +1,7 @@
 # Platform-specific VS Code extension packages (server and reference
 # engine bundled), built on demand or for a `v*` tag. A tag also creates a
-# GitHub release with the packages. Only the linux-x64 package is tested.
+# GitHub release with the packages and, when the OVSX_PAT secret is set,
+# publishes them to Open VSX. Only the linux-x64 package is tested.
 name: Release
 
 on:
@@ -81,3 +82,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.vsix --repo "$GITHUB_REPOSITORY" --generate-notes
+
+  publish:
+    needs: dist
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: for f in dist/*.vsix; do npx --yes ovsx publish "$f"; done
