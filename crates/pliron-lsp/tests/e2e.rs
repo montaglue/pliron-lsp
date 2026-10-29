@@ -183,6 +183,22 @@ fn engine_exact_features() {
         model.contains("^bb2(x2: builtin.integer i64, y2: builtin.integer i64)"),
         "{model}"
     );
+    // The model itself, for tools that draw the IR.
+    let m = c.request("pliron/model", doc.clone());
+    let ops = m["model"]["ops"].as_array().unwrap();
+    let ranges = m["opRanges"].as_array().unwrap();
+    assert_eq!(ops.len(), ranges.len(), "{m:#}");
+    let call = ops.iter().position(|o| o["opid"] == "llvm.call").unwrap();
+    assert_eq!(
+        ranges[call]["start"],
+        at("r = llvm.call", 0)["position"],
+        "{m:#}"
+    );
+    let cond_br = &ops[ops
+        .iter()
+        .position(|o| o["opid"] == "llvm.cond_br")
+        .unwrap()];
+    assert_eq!(cond_br["successors"].as_array().unwrap().len(), 2, "{m:#}");
     let tree = c.request("pliron/viewSyntaxTree", doc.clone());
     assert!(
         tree.as_str().unwrap().contains("STMT builtin.module"),

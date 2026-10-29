@@ -1581,6 +1581,24 @@ impl Server {
                 };
                 serde_json::json!({ "engine": engine.label, "passes": info.passes })
             }
+            "pliron/model" => {
+                let p: DocParams = serde_json::from_value(req.params)?;
+                let uri = p
+                    .text_document
+                    .ok_or_else(|| anyhow::anyhow!("missing textDocument"))?
+                    .uri;
+                let doc = self.doc(&uri)?;
+                match doc.fresh_exact() {
+                    // The engine has not analyzed the current text (yet).
+                    None => serde_json::json!({ "model": null, "note": doc.engine_note }),
+                    Some(x) => {
+                        let op_ranges: Vec<Option<lsp_types::Range>> = (0..x.model.ops.len())
+                            .map(|op| x.op_span.get(&(op as u32)).map(|(r, _)| doc.range(*r, enc)))
+                            .collect();
+                        serde_json::json!({ "model": x.model, "opRanges": op_ranges })
+                    }
+                }
+            }
             "pliron/viewEngineModel"
             | "pliron/viewSyntaxTree"
             | "pliron/viewPrinted"
