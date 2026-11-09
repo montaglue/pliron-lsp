@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- Fixed "Duplicate dictionary key" errors from engines of projects that
+  use git dependencies without `branch`/`tag`/`rev` (such as
+  pliron-tensor): the dialect crates were built and linked twice.
+- New setting `pliron.bundles.cacheDir`: `shared` (default) keeps one
+  engine build cache for all projects, blank builds inside each project's
+  `target/`, a path moves the cache.
+
 ## 0.1.1
 
 - Renamed to "pliron LSP".
