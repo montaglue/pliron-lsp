@@ -5,6 +5,12 @@
 - Fixed "Duplicate dictionary key" errors from engines of projects that
   use git dependencies without `branch`/`tag`/`rev` (such as
   pliron-tensor): the dialect crates were built and linked twice.
+- Engines follow the project's `Cargo.lock`: after `cargo update` they
+  no longer keep building the old revisions of the dialect crates.
+- Projects without a `Cargo.lock` (libraries such as
+  pliron-common-dialects) resolve their git dependencies like `cargo
+  build` does, instead of offline from whatever revisions were cached
+  (which also wrote that stale `Cargo.lock` into the project).
 - New setting `pliron.bundles.cacheDir`: `shared` (default) keeps one
   engine build cache for all projects, blank builds inside each project's
   `target/`, a path moves the cache.

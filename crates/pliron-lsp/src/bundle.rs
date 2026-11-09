@@ -71,13 +71,24 @@ pub fn find_project_dir(file: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The project's metadata, offline when possible. Without a lockfile (a
+/// library, say) cargo resolves from scratch, and offline it would pick
+/// whatever git revisions happen to be cached instead of the ones `cargo
+/// build` fetches, and write them into a new `Cargo.lock`.
 pub fn load_metadata(dir: &Path) -> anyhow::Result<Metadata> {
     let mut cmd = MetadataCommand::new();
     cmd.current_dir(dir);
-    match cmd.clone().other_options(vec!["--offline".into()]).exec() {
-        Ok(m) => Ok(m),
-        Err(_) => cmd.exec().context("cargo metadata failed"),
+    if has_lockfile(dir)
+        && let Ok(m) = cmd.clone().other_options(vec!["--offline".into()]).exec()
+    {
+        return Ok(m);
     }
+    cmd.exec().context("cargo metadata failed")
+}
+
+/// Whether `dir` or a parent (its workspace root) has a `Cargo.lock`.
+fn has_lockfile(dir: &Path) -> bool {
+    dir.ancestors().any(|d| d.join("Cargo.lock").is_file())
 }
 
 /// How a dependency is specified in the generated manifest.
@@ -1006,15 +1017,29 @@ pub fn generate(meta: &Metadata, sel: &Selection) -> anyhow::Result<PathBuf> {
     )
     .unwrap();
     write_if_changed(&dir.join("src/main.rs"), main.as_bytes())?;
-
-    // Pin the project's dependency versions.
-    if let Ok(lock) = std::fs::read(root.join("Cargo.lock")) {
-        let dest = dir.join("Cargo.lock");
-        if !dest.exists() {
-            write_if_changed(&dest, &lock)?;
-        }
-    }
+    pin_project_lock(root, &dir)?;
     Ok(dir)
+}
+
+/// The project's lockfile, as the copy the bundle's `Cargo.lock` was made
+/// from.
+const PROJECT_LOCK: &str = "project.lock";
+
+/// Pin the project's dependency versions: the bundle starts from its
+/// `Cargo.lock`. cargo adds the bundle's own packages to the copy, so it is
+/// replaced only when the project's lockfile changes (`cargo update`, say);
+/// otherwise the engine would keep building the old revisions of the
+/// dialect crates against a newly vendored pliron.
+fn pin_project_lock(root: &Path, dir: &Path) -> anyhow::Result<()> {
+    let Ok(lock) = std::fs::read(root.join("Cargo.lock")) else {
+        return Ok(());
+    };
+    let copied = dir.join(PROJECT_LOCK);
+    if std::fs::read(&copied).ok().as_deref() != Some(&lock[..]) {
+        write_if_changed(&dir.join("Cargo.lock"), &lock)?;
+        write_if_changed(&copied, &lock)?;
+    }
+    Ok(())
 }
 
 /// Progress of a bundle build.
@@ -1181,6 +1206,37 @@ pub fn describe(sel: &Selection) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lockfile_of_the_project_or_its_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member = tmp.path().join("ws/member");
+        std::fs::create_dir_all(&member).unwrap();
+        assert!(!has_lockfile(&member));
+        std::fs::write(tmp.path().join("ws/Cargo.lock"), "").unwrap();
+        assert!(has_lockfile(&member));
+    }
+
+    #[test]
+    fn bundle_lock_follows_the_project_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, dir) = (tmp.path().join("p"), tmp.path().join("b"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let bundle_lock = || std::fs::read_to_string(dir.join("Cargo.lock")).unwrap();
+        std::fs::write(root.join("Cargo.lock"), "v1").unwrap();
+        pin_project_lock(&root, &dir).unwrap();
+        assert_eq!(bundle_lock(), "v1");
+        // cargo adds the bundle's packages; they stay while the project's
+        // lockfile is the same.
+        std::fs::write(dir.join("Cargo.lock"), "v1 + bundle").unwrap();
+        pin_project_lock(&root, &dir).unwrap();
+        assert_eq!(bundle_lock(), "v1 + bundle");
+        // After `cargo update` in the project, its versions are pinned again.
+        std::fs::write(root.join("Cargo.lock"), "v2").unwrap();
+        pin_project_lock(&root, &dir).unwrap();
+        assert_eq!(bundle_lock(), "v2");
+    }
 
     #[test]
     fn clean_manifest_drops_tests_and_dev_deps() {
