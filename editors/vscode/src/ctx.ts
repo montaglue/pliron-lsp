@@ -59,7 +59,13 @@ export class Ctx implements vscode.Disposable {
     );
     const run: lc.Executable = {
       command: this.server.path,
-      options: { env: { ...process.env, ...this.config.serverExtraEnv } },
+      options: {
+        env: {
+          ...process.env,
+          ...this.config.serverExtraEnv,
+          ...this.config.cacheDirEnv,
+        },
+      },
     };
     const clientOptions: lc.LanguageClientOptions = {
       documentSelector: [

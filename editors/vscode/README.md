@@ -49,6 +49,7 @@ Clicking the status bar item opens a menu with these commands.
 | `pliron.engine.path` | Use one fixed engine binary for every file. |
 | `pliron.engine.idleTimeout` | Seconds without work after which an engine process stops; it starts again when needed (default 600, `0`: never). |
 | `pliron.bundles.enabled` | Turn off automatic project engines. |
+| `pliron.bundles.cacheDir` | Where engines are built: `shared` (default) is one cache for all projects in `~/.cache/pliron-lsp` (macOS `~/Library/Caches`, Windows `%LOCALAPPDATA%`); blank builds inside each project's `target/`; or a directory of your choice. |
 | `pliron.diagnostics.roundTrip` | Warn about operations whose printed form does not parse back to the same IR (on by default). |
 | `pliron.trace.server` | Trace LSP traffic. |
 

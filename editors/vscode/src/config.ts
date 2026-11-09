@@ -15,6 +15,7 @@ export class Config {
     "pliron.engine.enabled",
     "pliron.engine.path",
     "pliron.bundles.enabled",
+    "pliron.bundles.cacheDir",
     "pliron.diagnostics.roundTrip",
     "pliron.engine.idleTimeout",
   ];
@@ -25,6 +26,19 @@ export class Config {
 
   get serverExtraEnv(): Record<string, string> {
     return this.cfg.get<Record<string, string>>("server.extraEnv") ?? {};
+  }
+
+  /**
+   * `PLIRON_LSP_CACHE_DIR` for `pliron.bundles.cacheDir`: nothing for
+   * `shared` (the server's default, or the variable from the environment),
+   * empty for the project's `target/`, else the directory.
+   */
+  get cacheDirEnv(): Record<string, string> {
+    const dir = this.cfg.get<string>("bundles.cacheDir", "shared").trim();
+    if (dir === "shared") {
+      return {};
+    }
+    return { PLIRON_LSP_CACHE_DIR: expand(dir) ?? "" };
   }
 
   get engineEnabled(): boolean {

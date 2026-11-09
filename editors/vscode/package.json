@@ -111,6 +111,11 @@
           "default": true,
           "markdownDescription": "Automatically build a dialect engine for cargo projects that define pliron dialects (and rebuild it when their sources change)."
         },
+        "pliron.bundles.cacheDir": {
+          "type": "string",
+          "default": "shared",
+          "markdownDescription": "Where dialect engines are built.\n\n- `shared` (default): one cache for all projects (Linux `~/.cache/pliron-lsp`, macOS `~/Library/Caches/pliron-lsp`, Windows `%LOCALAPPDATA%\\pliron-lsp`), so pliron is compiled once per version and toolchain.\n- **Blank: inside each project's `target/`** (`target/pliron-lsp`); every project compiles pliron itself.\n- A path: that directory, as the shared cache. `${workspaceFolder}`, `${userHome}` and `~` are expanded.\n\nSets `PLIRON_LSP_CACHE_DIR` for the server."
+        },
         "pliron.diagnostics.roundTrip": {
           "type": "boolean",
           "default": true,
