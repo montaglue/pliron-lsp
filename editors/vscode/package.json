@@ -1,8 +1,8 @@
 {
   "name": "pliron",
-  "displayName": "pliron IR",
+  "displayName": "pliron LSP",
   "description": "pliron IR support powered by pliron-lsp: exact diagnostics, highlighting, navigation and type hints from your project's own dialects — no setup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "montaglue",
   "license": "Apache-2.0",
   "preview": true,

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Renamed to "pliron LSP".
+- New `pliron/model` server request: the engine's IR model of a document,
+  with the source range of each op, for tools that draw the IR.
+
 ## 0.1.0
 
 First release.
