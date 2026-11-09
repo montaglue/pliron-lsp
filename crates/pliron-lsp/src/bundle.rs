@@ -87,10 +87,14 @@ pub enum DepSpec {
     Registry {
         version: String,
     },
+    /// Exactly as the project declares it: cargo treats `rev = <commit>`
+    /// and the default branch as different sources even at the same
+    /// commit, and would link the crate twice. The commit is pinned by the
+    /// project's `Cargo.lock`, which the bundle starts from.
     Git {
         url: String,
+        /// `branch`/`tag`/`rev` and its value; `None` for the default branch.
         reference: Option<(String, String)>,
-        rev: String,
     },
 }
 
@@ -118,8 +122,8 @@ pub enum PlironSource {
     /// A git checkout of the pliron repository.
     Git {
         url: String,
+        /// As in [`DepSpec::Git`].
         reference: Option<(String, String)>,
-        rev: String,
         /// Root of the checkout (the pliron package + its workspace).
         root: PathBuf,
     },
@@ -152,7 +156,7 @@ fn dep_spec(pkg: &Package) -> DepSpec {
         Some(src) => {
             let repr = &src.repr;
             if let Some(rest) = repr.strip_prefix("git+") {
-                let (url_q, rev) = rest.split_once('#').unwrap_or((rest, ""));
+                let url_q = rest.split_once('#').map_or(rest, |(u, _)| u);
                 let (url, query) = url_q.split_once('?').unwrap_or((url_q, ""));
                 let reference = query
                     .split_once('=')
@@ -160,7 +164,6 @@ fn dep_spec(pkg: &Package) -> DepSpec {
                 DepSpec::Git {
                     url: url.to_string(),
                     reference,
-                    rev: rev.to_string(),
                 }
             } else {
                 DepSpec::Registry {
@@ -360,14 +363,9 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
         }
     } else {
         match dep_spec(pliron) {
-            DepSpec::Git {
+            DepSpec::Git { url, reference } => PlironSource::Git {
                 url,
                 reference,
-                rev,
-            } => PlironSource::Git {
-                url,
-                reference,
-                rev,
                 root: pliron_dir,
             },
             _ => {
@@ -408,16 +406,10 @@ fn spec_fields(spec: &DepSpec) -> Vec<String> {
         DepSpec::Registry { version } => {
             fields.push(format!("version = {}", toml_str(&format!("={version}"))))
         }
-        DepSpec::Git {
-            url,
-            reference,
-            rev,
-        } => {
+        DepSpec::Git { url, reference } => {
             fields.push(format!("git = {}", toml_str(url)));
-            match reference {
-                Some((k, v)) => fields.push(format!("{k} = {}", toml_str(v))),
-                None if !rev.is_empty() => fields.push(format!("rev = {}", toml_str(rev))),
-                None => {}
+            if let Some((k, v)) = reference {
+                fields.push(format!("{k} = {}", toml_str(v)));
             }
         }
     }
@@ -754,15 +746,9 @@ const PROTOCOL_MANIFEST: &str = "[package]\nname = \"pliron-lsp-protocol\"\nvers
 fn engine_manifest(sel: &Selection, protocol: &Path) -> String {
     let pliron = match &sel.pliron {
         PlironSource::Registry { .. } => toml_str(&format!("={}", sel.pliron_version)).to_string(),
-        PlironSource::Git {
-            url,
-            reference,
-            rev,
-            ..
-        } => {
+        PlironSource::Git { url, reference, .. } => {
             let r = match reference {
                 Some((k, v)) => format!(", {k} = {}", toml_str(v)),
-                None if !rev.is_empty() => format!(", rev = {}", toml_str(rev)),
                 None => String::new(),
             };
             format!("{{ git = {}{r} }}", toml_str(url))
@@ -1239,10 +1225,19 @@ mod tests {
                     spec: DepSpec::Git {
                         url: "https://github.com/a/b".into(),
                         reference: Some(("branch".into(), "main".into())),
-                        rev: "abc".into(),
                     },
                     features: vec![],
                     dir: "/g".into(),
+                },
+                DialectCrate {
+                    name: "h".into(),
+                    version: "0.3.0".into(),
+                    spec: DepSpec::Git {
+                        url: "https://github.com/a/h.git".into(),
+                        reference: None,
+                    },
+                    features: vec![],
+                    dir: "/h".into(),
                 },
             ],
             api: Some(DepSpec::Path("/w/api".into())),
@@ -1256,6 +1251,9 @@ mod tests {
         assert!(m.contains(r#"d0 = { package = "my-dialect", path = "/w/my dialect", default-features = false, features = ["default"] }"#), "{m}");
         assert!(m.contains(r#"d1 = { package = "pliron-llvm", version = "=0.18.0", default-features = false, features = [] }"#), "{m}");
         assert!(m.contains(r#"d2 = { package = "g", git = "https://github.com/a/b", branch = "main", default-features = false, features = [] }"#), "{m}");
+        // The default branch stays the default branch: pinning the commit
+        // with `rev` would make cargo build a second copy of the crate.
+        assert!(m.contains(r#"d3 = { package = "h", git = "https://github.com/a/h.git", default-features = false, features = [] }"#), "{m}");
         assert!(m.contains("pliron = { path = \"/c/p/pliron\" }"), "{m}");
         assert!(
             m.contains("[[bin]]\nname = \"pliron-lsp-engine-0123abcd\""),
@@ -1370,7 +1368,6 @@ mod tests {
             pliron: PlironSource::Git {
                 url: "https://github.com/pliron-org/pliron.git".into(),
                 reference: Some(("rev".into(), "e23ff9f".into())),
-                rev: "e23ff9f".into(),
                 root: "/r".into(),
             },
             patch_version: "0.17",
