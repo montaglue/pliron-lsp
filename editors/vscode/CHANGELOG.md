@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3
+
+- Fixed engines failing to start with "duplicate #[distributed_slice] with
+  name CONTEXT_REGISTRATIONS" in projects that have a second pliron
+  version among their dependencies (such as plironnx, which gets cubecl's
+  pliron 0.19 through burn): the engine now links the dialects of the
+  pliron the project itself uses only.
+- Supports pliron's development branch again: its latest changes
+  (pliron-org/pliron#323) made instrumenting it fail, and projects that
+  take pliron from git were checked for syntax only.
+
 ## 0.1.2
 
 - Fixed "Duplicate dictionary key" errors from engines of projects that
