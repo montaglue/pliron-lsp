@@ -35,13 +35,15 @@ fn patch_for(version: &cargo_metadata::semver::Version) -> Option<(&'static str,
     let key = format!("{}.{}", version.major, version.minor);
     embedded::PATCHES
         .iter()
-        .find(|(v, _)| *v == key)
-        .map(|(v, p)| (*v, *p))
+        .find(|(v, ..)| *v == key)
+        .map(|(v, _, p)| (*v, *p))
 }
 
 /// The pliron version lines pliron-lsp can instrument.
 pub fn supported_versions() -> Vec<&'static str> {
-    embedded::PATCHES.iter().map(|(v, _)| *v).collect()
+    let mut v: Vec<&str> = embedded::PATCHES.iter().map(|(v, ..)| *v).collect();
+    v.dedup();
+    v
 }
 
 /// Strings whose presence marks a crate as defining pliron entities.
@@ -506,10 +508,7 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// The instrumented pliron's directory name: its version, and a hash of
 /// its sources and the instrumentation.
 fn pliron_key(sel: &Selection) -> anyhow::Result<String> {
-    let (_, patch) = embedded::PATCHES
-        .iter()
-        .find(|(v, _)| *v == sel.patch_version)
-        .context("missing instrumentation patch")?;
+    let (patch, _) = instrument_pliron(sel)?;
     let source = match &sel.pliron {
         PlironSource::Registry {
             pliron_dir,
@@ -858,11 +857,39 @@ fn instrument_derive(
 /// Copy the project's pliron sources into `dest` and instrument them:
 /// pliron with the patch for its version, pliron-derive by
 /// [`instrument_derive`].
-fn vendor_pliron(sel: &Selection, dest: &Path) -> anyhow::Result<()> {
-    let (_, diff) = embedded::PATCHES
+/// The pliron package's directory.
+fn pliron_src(sel: &Selection) -> &Path {
+    match &sel.pliron {
+        PlironSource::Registry { pliron_dir, .. } => pliron_dir,
+        PlironSource::Git { root, .. } => root,
+    }
+}
+
+/// The instrumentation patch for the project's pliron and the files it
+/// produces: the first of its version line's patches that applies (later
+/// ones follow changes on pliron's development branch).
+fn instrument_pliron(sel: &Selection) -> anyhow::Result<(&'static str, Vec<(String, String)>)> {
+    let src = pliron_src(sel);
+    let mut errors = Vec::new();
+    for (_, name, diff) in embedded::PATCHES
         .iter()
-        .find(|(v, _)| *v == sel.patch_version)
-        .context("missing instrumentation patch")?;
+        .filter(|(v, ..)| *v == sel.patch_version)
+    {
+        match crate::patcher::apply_in_memory(diff, |p| {
+            Ok(std::fs::read_to_string(src.join(p)).ok())
+        }) {
+            Ok(files) => return Ok((diff, files)),
+            Err(e) => errors.push(format!("{name}: {e:#}")),
+        }
+    }
+    if errors.is_empty() {
+        bail!("missing instrumentation patch");
+    }
+    bail!("instrumenting pliron: {}", errors.join("; "))
+}
+
+fn vendor_pliron(sel: &Selection, dest: &Path) -> anyhow::Result<()> {
+    let (_, patched) = instrument_pliron(sel)?;
     // Sources and copies. Patch paths are relative to the pliron crate.
     let (trees, pliron_src, derive_src, out_pliron, out_derive) = match &sel.pliron {
         PlironSource::Registry {
@@ -892,10 +919,6 @@ fn vendor_pliron(sel: &Selection, dest: &Path) -> anyhow::Result<()> {
     // anything: files whose content does not change keep their mtime, so
     // regenerating a bundle does not make cargo rebuild pliron.
     let mut files: HashMap<PathBuf, Vec<u8>> = HashMap::new();
-    let patched = crate::patcher::apply_in_memory(diff, |p| {
-        Ok(std::fs::read_to_string(pliron_src.join(p)).ok())
-    })
-    .context("instrumenting pliron")?;
     for (p, text) in patched {
         files.insert(out_pliron.join(p), text.into_bytes());
     }
@@ -1453,7 +1476,7 @@ mod tests {
             supported_versions(),
             ["0.16", "0.17", "0.18", "0.19", "0.20"]
         );
-        for (_, p) in embedded::PATCHES {
+        for (_, _, p) in embedded::PATCHES {
             assert!(p.contains("+++ b/src/lsp.rs"));
         }
     }

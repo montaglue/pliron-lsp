@@ -45,7 +45,9 @@ fn main() {
             }
         }
     }
-    // Instrumentation patches, one per supported pliron version line.
+    // Instrumentation patches: `pliron-<line>.patch` for each supported
+    // pliron version line, and `pliron-<line>+<commit>.patch` for its
+    // development branch since that commit.
     let patches_dir = repo.join("third_party/patches");
     println!("cargo:rerun-if-changed={}", patches_dir.display());
     let mut patches = Vec::new();
@@ -57,7 +59,13 @@ fn main() {
                 .strip_prefix("pliron-")
                 .and_then(|n| n.strip_suffix(".patch"))
             {
-                patches.push((v.to_string(), p.clone()));
+                let (line, variant) = v.split_once('+').unwrap_or((v, ""));
+                patches.push((
+                    line.to_string(),
+                    variant.to_string(),
+                    name.clone(),
+                    p.clone(),
+                ));
                 files.push((format!("patches/{name}"), p));
             }
         }
@@ -79,11 +87,13 @@ fn main() {
         .unwrap();
     }
     code.push_str("];\n");
-    code.push_str("/// (pliron version line, patch)\npub static PATCHES: &[(&str, &str)] = &[\n");
-    for (v, p) in &patches {
+    code.push_str(
+        "/// (pliron version line, file name, patch), a line's release patch first\npub static PATCHES: &[(&str, &str, &str)] = &[\n",
+    );
+    for (v, _, name, p) in &patches {
         writeln!(
             code,
-            "    ({v:?}, include_str!({:?})),",
+            "    ({v:?}, {name:?}, include_str!({:?})),",
             p.display().to_string()
         )
         .unwrap();
