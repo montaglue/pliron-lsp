@@ -257,13 +257,32 @@ struct Config {
     exclude: Vec<String>,
 }
 
+/// The pliron to build the engine for. The graph can have several (the
+/// dependencies of an unrelated dependency, say), but one binary can link
+/// only one: their registries collide. Take the one the workspace members
+/// use, the newest if there are several.
+fn project_pliron<'a>(
+    meta: &'a Metadata,
+    by_id: &HashMap<&PackageId, &'a Package>,
+) -> Option<&'a Package> {
+    let all = meta.packages.iter().filter(|p| p.name == "pliron");
+    let used = meta
+        .resolve
+        .iter()
+        .flat_map(|r| &r.nodes)
+        .filter(|n| meta.workspace_members.contains(&n.id))
+        .flat_map(|n| &n.deps)
+        .filter_map(|d| by_id.get(&d.pkg).copied())
+        .filter(|p| p.name == "pliron");
+    used.max_by(|a, b| a.version.cmp(&b.version))
+        .or_else(|| all.max_by(|a, b| a.version.cmp(&b.version)))
+}
+
 /// Choose the dialect crates of a project.
 pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
-    let pliron = meta
-        .packages
-        .iter()
-        .find(|p| p.name == "pliron")
-        .ok_or(NoBundle::NotPliron)?;
+    let by_id: HashMap<&PackageId, &Package> = meta.packages.iter().map(|p| (&p.id, p)).collect();
+    let resolve = meta.resolve.as_ref().ok_or(NoBundle::NotPliron)?;
+    let pliron = project_pliron(meta, &by_id).ok_or(NoBundle::NotPliron)?;
     let config: Config = meta
         .workspace_metadata
         .get("pliron-lsp")
@@ -271,21 +290,30 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
-    let core: BTreeSet<&PackageId> = meta
+    // That pliron and its pliron-derive; dialects of any other pliron in
+    // the graph are left out.
+    let mut core: BTreeSet<&PackageId> = resolve
+        .nodes
+        .iter()
+        .filter(|n| n.id == pliron.id)
+        .flat_map(|n| &n.deps)
+        .filter(|d| by_id.get(&d.pkg).is_some_and(|p| p.name == "pliron-derive"))
+        .map(|d| &d.pkg)
+        .collect();
+    core.insert(&pliron.id);
+    let other_core: BTreeSet<&PackageId> = meta
         .packages
         .iter()
-        .filter(|p| p.name == "pliron" || p.name == "pliron-derive")
+        .filter(|p| (p.name == "pliron" || p.name == "pliron-derive") && !core.contains(&p.id))
         .map(|p| &p.id)
         .collect();
-    let by_id: HashMap<&PackageId, &Package> = meta.packages.iter().map(|p| (&p.id, p)).collect();
-    let resolve = meta.resolve.as_ref().ok_or(NoBundle::NotPliron)?;
 
     let mut dialects = Vec::new();
     for node in &resolve.nodes {
         let Some(pkg) = by_id.get(&node.id) else {
             continue;
         };
-        if core.contains(&node.id) {
+        if core.contains(&node.id) || other_core.contains(&node.id) {
             continue;
         }
         let Some(lib) = lib_target(pkg) else { continue };
@@ -293,9 +321,15 @@ pub fn select(meta: &Metadata) -> Result<Selection, NoBundle> {
         if config.exclude.contains(&pkg.name) {
             continue;
         }
-        let uses_pliron = node.deps.iter().any(|d| {
-            core.contains(&d.pkg) && d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal)
-        });
+        let normal_deps = || {
+            node.deps
+                .iter()
+                .filter(|d| d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal))
+        };
+        if normal_deps().any(|d| other_core.contains(&d.pkg)) {
+            continue;
+        }
+        let uses_pliron = normal_deps().any(|d| core.contains(&d.pkg));
         if !forced && !uses_pliron {
             continue;
         }
@@ -1236,6 +1270,77 @@ mod tests {
         std::fs::write(root.join("Cargo.lock"), "v2").unwrap();
         pin_project_lock(&root, &dir).unwrap();
         assert_eq!(bundle_lock(), "v2");
+    }
+
+    #[test]
+    fn dialects_of_one_pliron() {
+        // plironnx: its own pliron 0.20 dialects, and burn's cubecl crates
+        // with pliron 0.19 in the graph.
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = "registry+https://github.com/rust-lang/crates.io-index";
+        let mut packages = vec![];
+        let mut nodes = vec![];
+        let mut add = |name: &str, version: &str, deps: &[&str], dialect: bool| {
+            let id = format!("{name}@{version}");
+            let dir = tmp.path().join(&id);
+            std::fs::create_dir_all(dir.join("src")).unwrap();
+            let lib = dir.join("src/lib.rs");
+            std::fs::write(&lib, if dialect { "#[pliron_op]" } else { "" }).unwrap();
+            packages.push(serde_json::json!({
+                "name": name, "version": version, "id": id, "source": registry,
+                "dependencies": [], "features": {},
+                "manifest_path": dir.join("Cargo.toml"),
+                "targets": [{ "name": name, "kind": ["lib"], "src_path": lib }],
+            }));
+            let deps: Vec<_> = deps
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "name": d.split('@').next().unwrap(), "pkg": d,
+                        "dep_kinds": [{ "kind": null, "target": null }],
+                    })
+                })
+                .collect();
+            nodes.push(serde_json::json!({ "id": id, "deps": deps, "dependencies": [] }));
+        };
+        add("pliron-derive", "0.19.0", &[], false);
+        add("pliron", "0.19.0", &["pliron-derive@0.19.0"], false);
+        add("pliron-derive", "0.20.0", &[], false);
+        add("pliron", "0.20.0", &["pliron-derive@0.20.0"], false);
+        add("pliron-llvm", "0.19.0", &["pliron@0.19.0"], true);
+        add("pliron-llvm", "0.20.0", &["pliron@0.20.0"], true);
+        add("cubecl-ir", "0.11.4", &["pliron@0.19.0"], true);
+        add(
+            "tensor",
+            "0.1.0",
+            &["pliron@0.20.0", "pliron-llvm@0.20.0"],
+            true,
+        );
+        add("onnx", "0.1.0", &["pliron@0.20.0", "tensor@0.1.0"], true);
+        let meta: Metadata = serde_json::from_value(serde_json::json!({
+            "packages": packages,
+            "workspace_members": ["onnx@0.1.0"],
+            "resolve": { "nodes": nodes, "root": null },
+            "workspace_root": tmp.path(),
+            "target_directory": tmp.path().join("target"),
+            "version": 1,
+        }))
+        .unwrap();
+        let sel = select(&meta).unwrap();
+        assert_eq!(sel.pliron_version, "0.20.0");
+        let PlironSource::Registry { derive_version, .. } = &sel.pliron else {
+            panic!("{:?}", sel.pliron);
+        };
+        assert_eq!(derive_version, "0.20.0");
+        let dialects: Vec<_> = sel
+            .dialects
+            .iter()
+            .map(|d| format!("{}@{}", d.name, d.version))
+            .collect();
+        assert_eq!(
+            dialects,
+            ["onnx@0.1.0", "pliron-llvm@0.20.0", "tensor@0.1.0"]
+        );
     }
 
     #[test]
