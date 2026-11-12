@@ -1,0 +1,42 @@
+# Written by `cargo xtask check-projects --bless`.
+# engine: pliron-common-dialects, pliron-llvm
+pliron-lsp-samples/test_cond_br_op_to_llvm_conversion_expect.pliron:22:1: error[parse]: Error parsing outline entries: Parse error at line: 22, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_execute_region_op_non_branch_terminator_rejected_input.pliron:6:9: error[verify]: Terminator of a non-exit block must implement BranchOpInterface
+pliron-lsp-samples/test_execute_region_op_to_llvm_conversion_expect.pliron:37:1: error[parse]: Error parsing outline entries: Parse error at line: 37, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_for_op_multi_block_body_rejected_input.pliron:10:9: error[verify]: Op cf.for must only have regions with single block
+pliron-lsp-samples/test_if_op_execute_region_in_then_branch_to_llvm_conversion_expect.pliron:34:1: error[parse]: Error parsing outline entries: Parse error at line: 34, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_if_op_missing_else_with_results_rejected_input.pliron:9:9: error[verify]: IfOp with results must have an else region
+pliron-lsp-samples/test_if_op_multi_block_region_rejected_input.pliron:10:13: error[verify]: Op cf.if must only have regions with single block
+pliron-lsp-samples/test_if_op_with_else_to_llvm_conversion_expect.pliron:26:1: error[parse]: Error parsing outline entries: Parse error at line: 26, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_if_op_with_else_to_llvm_conversion_expect_2.pliron:25:1: error[parse]: Error parsing outline entries: Parse error at line: 25, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_if_op_without_else_to_llvm_conversion_expect.pliron:22:1: error[parse]: Error parsing outline entries: Parse error at line: 22, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_index_ops_sccp_and_dce_expect.pliron:22:1: error[parse]: Error parsing outline entries: Parse error at line: 22, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_nested_for_op_iter_arg_result_type_expect.pliron:29:1: error[parse]: Error parsing outline entries: Parse error at line: 29, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_region_ops_dce_expect.pliron:21:1: error[parse]: Error parsing outline entries: Parse error at line: 21, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_region_ops_mem2reg_expect.pliron:50:1: error[parse]: Error parsing outline entries: Parse error at line: 50, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_region_ops_sccp_and_dce_expect.pliron:41:1: error[parse]: Error parsing outline entries: Parse error at line: 41, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:
+pliron-lsp-samples/test_region_ops_simplify_cfg_expect.pliron:38:1: error[parse]: Error parsing outline entries: Parse error at line: 38, column: 1
+    Unexpected end of input
+    Expected whitespaces or outlined_attributes:

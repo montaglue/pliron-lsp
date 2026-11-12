@@ -1,0 +1,36 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @test_execute_region: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        c0_v16 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64 !2;
+        c10_v17 = llvm.constant <builtin.integer <10: i64>> : builtin.integer i64 !3;
+        c1_v18 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !4;
+        init_v14 = llvm.constant <builtin.single 1> : builtin.fp32  !5;
+        inc_v15 = llvm.constant <builtin.single 3.5> : builtin.fp32  !6;
+        llvm.br ^for_op_header_block7v1(c0_v16, init_v14)
+
+      ^for_op_header_block7v1(v19: builtin.integer i64, result_v20: builtin.fp32 ) !7:
+        v21 = llvm.icmp v19 <ULT> c10_v17 : builtin.integer i1;
+        llvm.cond_br if v21 ^entry_block3v1(v19, result_v20) else ^entry_split_block5v3()
+
+      ^entry_block3v1(iv_v6: builtin.integer i64, iter_arg_v7: builtin.fp32 ) !8:
+        llvm.br ^entry_block4v1()
+
+      ^entry_block4v1() !9:
+        tmp_v9 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> iter_arg_v7, inc_v15 : builtin.fp32  !10;
+        llvm.br ^exit_block6v1(tmp_v9) !11
+
+      ^exit_block6v1(v_v10: builtin.fp32 ) !12:
+        llvm.br ^block8v1(v_v10)
+
+      ^block8v1(next_v23: builtin.fp32 ) !13:
+        v22 = llvm.add iv_v6, c1_v18 <{nsw=false,nuw=false}>: builtin.integer i64;
+        llvm.br ^for_op_header_block7v1(v22, next_v23)
+
+      ^entry_split_block5v3():
+        llvm.return result_v20 !14
+    } !15
+}

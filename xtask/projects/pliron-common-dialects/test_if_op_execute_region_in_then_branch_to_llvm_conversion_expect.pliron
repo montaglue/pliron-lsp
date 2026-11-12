@@ -1,0 +1,33 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @test_if_execute_region: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        zero_v8 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64 !2;
+        one_v9 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !3;
+        cond_v2 = llvm.icmp zero_v8 <ULT> one_v9 : builtin.integer i1 !4;
+        inc_v10 = llvm.constant <builtin.single 3.5> : builtin.fp32  !5;
+        false_val_v11 = llvm.constant <builtin.single 2> : builtin.fp32  !6;
+        llvm.cond_br if cond_v2 ^entry_block3v1() else ^entry_block5v3()
+
+      ^entry_block3v1() !7:
+        llvm.br ^entry_block4v1()
+
+      ^entry_block4v1() !8:
+        llvm.br ^next_block6v1(inc_v10) !9
+
+      ^next_block6v1(w_v7: builtin.fp32 ) !10:
+        llvm.br ^block8v1(w_v7)
+
+      ^block8v1(v_v13: builtin.fp32 ) !11:
+        llvm.br ^block7v1(v_v13)
+
+      ^entry_block5v3() !12:
+        llvm.br ^block7v1(false_val_v11)
+
+      ^block7v1(result_v12: builtin.fp32 ) !13:
+        llvm.return result_v12 !14
+    } !15
+}

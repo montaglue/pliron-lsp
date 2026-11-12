@@ -1,0 +1,23 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @test_nested_for: llvm.func <builtin.fp32 () variadic = false> [] {
+      ^entry():
+        c0 = index.constant <index.constant 0> : index.index;
+        c10 = index.constant <index.constant 10> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        init = builtin.constant <builtin.single 1.0> : builtin.fp32;
+        inc = builtin.constant <builtin.single 3.5> : builtin.fp32;
+
+        outer = cf.for c0 to c10 step c1 (init) {
+          ^entry(iv : index.index, iter_arg : builtin.fp32):
+              inner = cf.for c0 to c10 step c1 (iter_arg) {
+                  ^entry(iv2 : index.index, iter_arg2 : builtin.fp32):
+                      next2 = llvm.fadd <FAST> iter_arg2, inc : builtin.fp32;
+                      cf.yield next2
+              };
+              cf.yield inner
+        };
+
+        llvm.return outer
+    }
+}

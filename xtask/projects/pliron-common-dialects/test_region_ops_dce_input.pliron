@@ -1,0 +1,48 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @dead_ops: llvm.func <builtin.fp32 (builtin.integer i64, builtin.integer i1) variadic = false> [] {
+      ^entry(n : builtin.integer i64, cond : builtin.integer i1):
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        p = llvm.alloca [builtin.fp32 x one] : llvm.ptr(0);
+        f1 = builtin.constant <builtin.single 1.0> : builtin.fp32;
+        c0 = index.constant <index.constant 0> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        c5 = index.constant <index.constant 5> : index.index;
+        n_idx = index.from_integer n : index.index;
+        stops = cf.for c0 to c5 step c1 (f1) {
+            ^entry(iv1 : index.index, acc1 : builtin.fp32):
+                cf.yield acc1
+        };
+        unknown_ub = cf.for c0 to n_idx step c1 (f1) {
+            ^entry(iv2 : index.index, acc2 : builtin.fp32):
+                cf.yield acc2
+        };
+        cf.nd_for [c0, c0] to [c0, n_idx] step [c1, c1] {
+            ^entry(i0 : index.index, j0 : index.index):
+                cf.yield
+        };
+        cf.nd_for [c0] to [c5] step [c1] {
+            ^entry(i : index.index):
+                cf.yield
+        };
+        pure_if = cf.if cond -> (builtin.fp32) {
+            ^entry():
+                cf.yield f1
+        } else {
+            ^entry():
+                cf.yield f1
+        };
+        cf.if cond -> () {
+            ^entry():
+                llvm.store *p <- f1;
+                cf.yield
+        };
+        pure_region = cf.execute_region -> (builtin.fp32) {
+            ^entry():
+                cf.br ^exit(f1)
+            ^exit(v : builtin.fp32):
+                cf.yield v
+        };
+        llvm.return f1
+    }
+}

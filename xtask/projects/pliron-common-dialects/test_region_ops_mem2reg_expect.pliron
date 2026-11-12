@@ -1,0 +1,49 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @promote: llvm.func <builtin.fp32 (builtin.integer i64, builtin.integer i1) variadic = false>
+      [] 
+    {
+      ^entry_block2v1(n_v0: builtin.integer i64, cond_v1: builtin.integer i1) !1:
+        one_v2 = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64 !2;
+        f1_v4 = builtin.constant <builtin.single 1> : builtin.fp32  !3;
+        f2_v5 = builtin.constant <builtin.single 2> : builtin.fp32  !4;
+        c0_v6 = index.constant <index.constant 0> : index.index  !5;
+        c1_v7 = index.constant <index.constant 1> : index.index  !6;
+        n_idx_v8 = index.from_integer n_v0 : index.index  !7;
+        p_v17 = cf.for c0_v6 to n_idx_v8 step c1_v7 (f1_v4) 
+        {
+          ^entry_block3v1(iv_v9: index.index , p_v16: builtin.fp32 ) !8:
+            next_v11 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> p_v16, f1_v4 : builtin.fp32  !9;
+            cf.yield next_v11 !10
+        }
+ !11;
+        p_v18 = cf.if cond_v1 -> (builtin.fp32 ) 
+        {
+          ^entry_block4v1() !12:
+            cf.yield f2_v5 !13
+        } else 
+        {
+          ^entry_block5v1() !14:
+            cf.yield p_v17 !15
+        }
+ !16;
+        p_v19 = cf.execute_region -> (builtin.fp32 ) 
+        {
+          ^entry_block6v1() !17:
+            cf.cond_br if cond_v1 ^on_true_block9v1() else ^on_false_block10v1() !18
+
+          ^on_true_block9v1() !19:
+            w_v13 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> p_v18, p_v18 : builtin.fp32  !20;
+            cf.br ^exit_block8v3(w_v13) !21
+
+          ^on_false_block10v1() !22:
+            cf.br ^exit_block8v3(p_v18) !23
+
+          ^exit_block8v3(p_v15: builtin.fp32 ) !24:
+            cf.yield p_v15 !25
+        }
+ !26;
+        llvm.return p_v19 !27
+    } !28
+}

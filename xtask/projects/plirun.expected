@@ -1,0 +1,19 @@
+# Written by `cargo xtask check-projects --bless`.
+# engine: 
+tests/resources/cf_for.plir:13:21: error[parse]: Value result is not defined in this scope
+tests/resources/cf_for.plir:5:14: error[parse]: Unregistered dialect index
+tests/resources/cf_for.plir:6:15: error[parse]: Unregistered dialect index
+tests/resources/cf_for.plir:7:14: error[parse]: Unregistered dialect index
+tests/resources/cf_for.plir:9:18: error[parse]: Unregistered dialect cf
+tests/resources/cf_for_sum.plir:15:21: error[parse]: Value result is not defined in this scope
+tests/resources/cf_for_sum.plir:5:14: error[parse]: Unregistered dialect index
+tests/resources/cf_for_sum.plir:6:15: error[parse]: Unregistered dialect index
+tests/resources/cf_for_sum.plir:7:14: error[parse]: Unregistered dialect index
+tests/resources/cf_for_sum.plir:9:18: error[parse]: Unregistered dialect cf
+tests/resources/tensor_add.plir:12:18: error[parse]: Unregistered dialect tensor
+tests/resources/tensor_add.plir:19:22: error[parse]: Unregistered dialect tensor
+tests/resources/tensor_add.plir:20:23: error[parse]: Unregistered dialect index
+tests/resources/tensor_add.plir:21:23: error[parse]: Unregistered dialect index
+tests/resources/tensor_add.plir:22:15: error[parse]: Unregistered dialect tensor
+tests/resources/tensor_add.plir:23:21: error[parse]: Value res is not defined in this scope
+tests/resources/tensor_add.plir:5:18: error[parse]: Unregistered dialect tensor

@@ -18,6 +18,13 @@
 //!   the head of pliron's repository or another git branch: a tiny
 //!   dialect crate is created, and `pliron-lsp check` must build its engine
 //!   (instrumenting that pliron) and report exact diagnostics.
+//! * `cargo xtask check-projects [--latest] [--bless] [names...]`
+//!   checks pliron-lsp against real projects that use pliron (run it before
+//!   each release), see [`projects`]. `--latest` takes the projects' newest
+//!   commits instead of the pinned ones, `--bless` records the results as
+//!   the expected ones.
+
+mod projects;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -367,6 +374,7 @@ fn main() -> anyhow::Result<()> {
                 bail!("usage: cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>")
             }
         },
+        "check-projects" => projects::check_projects(&rest),
         "install" => {
             let (server, client) = match (flag("--server"), flag("--client")) {
                 (false, false) => (true, true),
@@ -376,7 +384,7 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!(
-                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]\n  cargo xtask test-vscode [--bundled]\n  cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>"
+                "usage:\n  cargo xtask dist [--no-build] [--target <vscode-target>]\n  cargo xtask install [--server] [--client]\n  cargo xtask test-vscode [--bundled]\n  cargo xtask check-pliron <0.17 | latest | head | git:URL[#BRANCH]>\n  cargo xtask check-projects [--latest] [--bless] [names...]"
             );
             Ok(())
         }

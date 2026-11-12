@@ -1,0 +1,24 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @index_fold: llvm.func <builtin.integer i64 () variadic = false> [] {
+      ^entry():
+        c3 = index.constant <index.constant 3> : index.index;
+        c4 = index.constant <index.constant 4> : index.index;
+        sum = index.add c3, c4 : index.index;
+        prod = index.mul sum, c3 : index.index;
+        max = index.constant <index.constant 18446744073709551615> : index.index;
+        wrapped = index.add max, prod : index.index;
+        int = index.to_integer wrapped to builtin.integer i64;
+        idx = index.from_integer int : index.index;
+        res = index.to_integer idx to builtin.integer i64;
+        llvm.return res
+    };
+    llvm.func @index_no_fold: llvm.func <builtin.integer i64 (builtin.integer i64) variadic = false> [] {
+      ^entry(n : builtin.integer i64):
+        c3 = index.constant <index.constant 3> : index.index;
+        n_idx = index.from_integer n : index.index;
+        sum = index.add n_idx, c3 : index.index;
+        res = index.to_integer sum to builtin.integer i64;
+        llvm.return res
+    }
+}

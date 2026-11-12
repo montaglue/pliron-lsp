@@ -1,0 +1,50 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @test_for: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        c0_v25 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64 !2;
+        c2_v17 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64 !3;
+        c3_v18 = llvm.constant <builtin.integer <3: i64>> : builtin.integer i64 !4;
+        c4_v20 = llvm.constant <builtin.integer <4: i64>> : builtin.integer i64 !5;
+        c6_v19 = llvm.mul c2_v17, c3_v18 <{nsw=false,nuw=false}>: builtin.integer i64 !6;
+        c10_v21 = llvm.add c6_v19, c4_v20 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
+        c1_v26 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !8;
+        init_v23 = llvm.constant <builtin.single 1> : builtin.fp32  !9;
+        inc_v24 = llvm.constant <builtin.single 3.5> : builtin.fp32  !10;
+        llvm.br ^for_op_header_block5v1(c0_v25, init_v23)
+
+      ^for_op_header_block5v1(v27: builtin.integer i64, result_v28: builtin.fp32 ) !11:
+        v29 = llvm.icmp v27 <ULT> c10_v21 : builtin.integer i1;
+        llvm.cond_br if v29 ^entry_block3v1(v27, result_v28) else ^entry_split_block4v1()
+
+      ^entry_block3v1(iv_v10: builtin.integer i64, iter_arg_v11: builtin.fp32 ) !12:
+        next_v12 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> iter_arg_v11, inc_v24 : builtin.fp32  !13;
+        v30 = llvm.add iv_v10, c1_v26 <{nsw=false,nuw=false}>: builtin.integer i64;
+        llvm.br ^for_op_header_block5v1(v30, next_v12)
+
+      ^entry_split_block4v1():
+        llvm.return result_v28 !14
+    } !15
+} !16
+
+outlined_attributes:
+!0 = @[<in-memory>: line: 3, column: 15], []
+!1 = @[<in-memory>: line: 5, column: 19], []
+!2 = @[<in-memory>: line: 6, column: 21], [builtin_given_names = builtin.given_names [c0]]
+!3 = @[<in-memory>: line: 7, column: 21], [builtin_given_names = builtin.given_names [c2]]
+!4 = @[<in-memory>: line: 8, column: 21], [builtin_given_names = builtin.given_names [c3]]
+!5 = @[<in-memory>: line: 9, column: 21], [builtin_given_names = builtin.given_names [c4]]
+!6 = @[<in-memory>: line: 10, column: 21], [builtin_given_names = builtin.given_names [c6]]
+!7 = @[<in-memory>: line: 11, column: 21], [builtin_given_names = builtin.given_names [c10]]
+!8 = @[<in-memory>: line: 12, column: 21], [builtin_given_names = builtin.given_names [c1]]
+!9 = @[<in-memory>: line: 13, column: 21], [builtin_given_names = builtin.given_names [init]]
+!10 = @[<in-memory>: line: 14, column: 21], [builtin_given_names = builtin.given_names [inc]]
+!11 = @[<in-memory>: line: 16, column: 21], [builtin_given_names = builtin.given_names [?, result]]
+!12 = @[<in-memory>: line: 17, column: 25], [builtin_given_names = builtin.given_names [iv, iter_arg]]
+!13 = @[<in-memory>: line: 18, column: 29], [builtin_given_names = builtin.given_names [next]]
+!14 = @[<in-memory>: line: 22, column: 21], []
+!15 = @[<in-memory>: line: 4, column: 17], []
+!16 = @[<in-memory>: line: 2, column: 13], []

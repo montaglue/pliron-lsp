@@ -1,0 +1,40 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @region_fold: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        true_val_v3 = builtin.constant <builtin.single 1> : builtin.fp32  !2;
+        false_val_v4 = builtin.constant <builtin.single 2> : builtin.fp32  !3;
+        if_res_v26 = builtin.constant <builtin.single 1> : builtin.fp32  !4;
+        for_res_v30 = builtin.constant <builtin.single 1> : builtin.fp32  !5;
+        llvm.return for_res_v30 !6
+    } !7;
+    llvm.func @poison_cond: llvm.func <builtin.integer i64(builtin.integer i64) variadic = false>
+      [] 
+    {
+      ^entry_block10v1(n_v17: builtin.integer i64) !8:
+        pc_v18 = llvm.poison : builtin.integer i1 !9;
+        c3_v19 = index.constant <index.constant 3> : index.index  !10;
+        c4_v20 = index.constant <index.constant 4> : index.index  !11;
+        r_v21 = cf.execute_region -> (builtin.integer i64) 
+        {
+          ^entry_block11v1() !12:
+            cf.cond_br if pc_v18 ^p_true_block14v1() else ^p_false_block15v1() !13
+
+          ^p_true_block14v1() !14:
+            sum_v22 = index.add c3_v19, c4_v20 : index.index  !15;
+            sum_int_v23 = index.to_integer sum_v22 to builtin.integer i64 !16;
+            cf.br ^p_exit_block13v3(sum_int_v23) !17
+
+          ^p_false_block15v1() !18:
+            cf.br ^p_exit_block13v3(n_v17) !19
+
+          ^p_exit_block13v3(v_v24: builtin.integer i64) !20:
+            cf.yield v_v24 !21
+        }
+ !22;
+        llvm.return r_v21 !23
+    } !24
+}

@@ -1,0 +1,14 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @test_execute_region: llvm.func <builtin.fp32 () variadic = false> [] {
+      ^entry():
+        inc = builtin.constant <builtin.single 3.5> : builtin.fp32;
+        next = cf.execute_region -> (builtin.fp32) {
+            ^entry():
+                llvm.return inc
+            ^exit(v : builtin.fp32):
+                cf.yield v
+        };
+        llvm.return next
+    }
+}

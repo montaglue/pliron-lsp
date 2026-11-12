@@ -1,0 +1,26 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @test_ndfor: llvm.func <builtin.fp32 () variadic = false> [] {
+      ^entry():
+        c0 = index.constant <index.constant 0> : index.index;
+        c10 = index.constant <index.constant 10> : index.index;
+        c11 = index.constant <index.constant 11> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        c1_0 = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        accum = llvm.alloca [builtin.fp32 x c1_0] : llvm.ptr(0);
+        f0 = builtin.constant <builtin.single 0.0> : builtin.fp32;
+        f1 = builtin.constant <builtin.single 1.5> : builtin.fp32;
+        llvm.store *accum <- f0;
+
+        cf.nd_for [c0, c0] to [c10, c11] step [c1, c1] {
+            ^entry(i : index.index, j : index.index):
+                accum_val = llvm.load accum : builtin.fp32;
+                sum = llvm.fadd <FAST> accum_val, f1 : builtin.fp32;
+                llvm.store *accum <- sum;
+                cf.yield
+        };
+
+        result = llvm.load accum : builtin.fp32;
+        llvm.return result
+    }
+}

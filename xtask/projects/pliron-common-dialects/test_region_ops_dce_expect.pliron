@@ -1,0 +1,20 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @dead_ops: llvm.func <builtin.fp32 (builtin.integer i64, builtin.integer i1) variadic = false>
+      [] 
+    {
+      ^entry_block2v1(n_v0: builtin.integer i64, cond_v1: builtin.integer i1) !1:
+        one_v2 = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64 !2;
+        p_v3 = llvm.alloca [builtin.fp32  x one_v2]  : llvm.ptr (0) !3;
+        f1_v4 = builtin.constant <builtin.single 1> : builtin.fp32  !4;
+        cf.if cond_v1 -> () 
+        {
+          ^entry_block9v1() !5:
+            llvm.store *p_v3 <- f1_v4  !6;
+            cf.yield  !7
+        }
+ !8;
+        llvm.return f1_v4 !9
+    } !10
+}

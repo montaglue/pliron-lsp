@@ -1,0 +1,44 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @promote: llvm.func <builtin.fp32 (builtin.integer i64, builtin.integer i1) variadic = false> [] {
+      ^entry(n : builtin.integer i64, cond : builtin.integer i1):
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        p = llvm.alloca [builtin.fp32 x one] : llvm.ptr(0);
+        f1 = builtin.constant <builtin.single 1.0> : builtin.fp32;
+        f2 = builtin.constant <builtin.single 2.0> : builtin.fp32;
+        c0 = index.constant <index.constant 0> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        n_idx = index.from_integer n : index.index;
+        llvm.store *p <- f1;
+        cf.for c0 to n_idx step c1 () {
+            ^entry(iv : index.index):
+                acc = llvm.load p : builtin.fp32;
+                next = llvm.fadd <FAST> acc, f1 : builtin.fp32;
+                llvm.store *p <- next;
+                cf.yield
+        };
+        cf.if cond -> () {
+            ^entry():
+                llvm.store *p <- f2;
+                cf.yield
+        } else {
+            ^entry():
+                cf.yield
+        };
+        cf.execute_region -> () {
+            ^entry():
+                cf.cond_br if cond ^on_true() else ^on_false()
+            ^on_true():
+                v = llvm.load p : builtin.fp32;
+                w = llvm.fadd <FAST> v, v : builtin.fp32;
+                llvm.store *p <- w;
+                cf.br ^exit()
+            ^on_false():
+                cf.br ^exit()
+            ^exit():
+                cf.yield
+        };
+        res = llvm.load p : builtin.fp32;
+        llvm.return res
+    }
+}

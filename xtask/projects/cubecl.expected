@@ -1,0 +1,2 @@
+# Written by `cargo xtask check-projects --bless`.
+# engine: cubecl-cpp, cubecl-ir, cubecl-opt, cubecl-tile, cubecl-wgpu, pliron-llvm, pliron-spirv

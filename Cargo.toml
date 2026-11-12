@@ -9,8 +9,9 @@ members = [
     "crates/pliron-lsp",
     "xtask",
 ]
-# The spike has its own standalone workspaces.
-exclude = ["spike", "third_party", "examples"]
+# The spike has its own standalone workspaces; `cargo xtask check-projects`
+# fetches projects into target/.
+exclude = ["spike", "third_party", "examples", "target"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,25 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @test_if_execute_region: llvm.func <builtin.fp32 () variadic = false> [] {
+    ^entry():
+        zero = builtin.constant <builtin.integer <0: i64>> : builtin.integer i64;
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        cond = llvm.icmp zero <ULT> one : builtin.integer i1;
+        inc = builtin.constant <builtin.single 3.5> : builtin.fp32;
+        false_val = builtin.constant <builtin.single 2.0> : builtin.fp32;
+        result = cf.if cond -> (builtin.fp32) {
+            ^entry():
+                v = cf.execute_region -> (builtin.fp32) {
+                    ^entry():
+                        cf.br ^next(inc)
+                    ^next(w : builtin.fp32):
+                        cf.yield w
+                };
+                cf.yield v
+        } else {
+            ^entry():
+                cf.yield false_val
+        };
+        llvm.return result
+    }
+}

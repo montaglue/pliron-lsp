@@ -1,0 +1,16 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @test_if_no_else: llvm.func <builtin.fp32 () variadic = false> [] {
+    ^entry():
+        zero = builtin.constant <builtin.integer <0: i64>> : builtin.integer i64;
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        cond = llvm.icmp zero <ULT> one : builtin.integer i1;
+        unused = builtin.constant <builtin.single 9.0> : builtin.fp32;
+        result = builtin.constant <builtin.single 42.0> : builtin.fp32;
+        cf.if cond -> () {
+            ^entry():
+                cf.yield
+        };
+        llvm.return result
+    }
+}

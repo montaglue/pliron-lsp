@@ -1,0 +1,72 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @test_ndfor: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        c0_v20 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64 !2;
+        c10_v21 = llvm.constant <builtin.integer <10: i64>> : builtin.integer i64 !3;
+        c11_v22 = llvm.constant <builtin.integer <11: i64>> : builtin.integer i64 !4;
+        c1_v23 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !5;
+        c1_0_v17 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !6;
+        accum_v5 = llvm.alloca [builtin.fp32  x c1_0_v17]  : llvm.ptr (0) !7;
+        f0_v18 = llvm.constant <builtin.single 0> : builtin.fp32  !8;
+        f1_v19 = llvm.constant <builtin.single 1.5> : builtin.fp32  !9;
+        llvm.store *accum_v5 <- f0_v18  !10;
+        llvm.br ^for_op_header_block9v1(c0_v20)
+
+      ^for_op_header_block9v1(v29: builtin.integer i64) !11:
+        v30 = llvm.icmp v29 <ULT> c10_v21 : builtin.integer i1;
+        llvm.cond_br if v30 ^entry_block5v1(v29) else ^entry_split_block8v1()
+
+      ^entry_block5v1(iv_v25: builtin.integer i64) !12:
+        llvm.br ^for_op_header_block7v1(c0_v20)
+
+      ^for_op_header_block7v1(v26: builtin.integer i64):
+        v27 = llvm.icmp v26 <ULT> c11_v22 : builtin.integer i1;
+        llvm.cond_br if v27 ^entry_block4v1(v26) else ^entry_split_block6v1()
+
+      ^entry_block4v1(iv_v24: builtin.integer i64) !13:
+        llvm.br ^entry_block3v1(iv_v25, iv_v24)
+
+      ^entry_block3v1(i_v8: builtin.integer i64, j_v9: builtin.integer i64) !14:
+        accum_val_v10 = llvm.load accum_v5  : builtin.fp32  !15;
+        sum_v11 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> accum_val_v10, f1_v19 : builtin.fp32  !16;
+        llvm.store *accum_v5 <- sum_v11  !17;
+        v28 = llvm.add iv_v24, c1_v23 <{nsw=false,nuw=false}>: builtin.integer i64;
+        llvm.br ^for_op_header_block7v1(v28)
+
+      ^entry_split_block6v1():
+        v31 = llvm.add iv_v25, c1_v23 <{nsw=false,nuw=false}>: builtin.integer i64;
+        llvm.br ^for_op_header_block9v1(v31)
+
+      ^entry_split_block8v1():
+        result_v12 = llvm.load accum_v5  : builtin.fp32  !18;
+        llvm.return result_v12 !19
+    } !20
+} !21
+
+outlined_attributes:
+!0 = @[<in-memory>: line: 3, column: 15], []
+!1 = @[<in-memory>: line: 5, column: 19], []
+!2 = @[<in-memory>: line: 6, column: 21], [builtin_given_names = builtin.given_names [c0]]
+!3 = @[<in-memory>: line: 7, column: 21], [builtin_given_names = builtin.given_names [c10]]
+!4 = @[<in-memory>: line: 8, column: 21], [builtin_given_names = builtin.given_names [c11]]
+!5 = @[<in-memory>: line: 9, column: 21], [builtin_given_names = builtin.given_names [c1]]
+!6 = @[<in-memory>: line: 10, column: 21], [builtin_given_names = builtin.given_names [c1_0]]
+!7 = @[<in-memory>: line: 11, column: 21], [builtin_given_names = builtin.given_names [accum]]
+!8 = @[<in-memory>: line: 12, column: 21], [builtin_given_names = builtin.given_names [f0]]
+!9 = @[<in-memory>: line: 13, column: 21], [builtin_given_names = builtin.given_names [f1]]
+!10 = @[<in-memory>: line: 14, column: 21], []
+!11 = @[<in-memory>: line: 16, column: 21], []
+!12 = [builtin_given_names = builtin.given_names [iv]]
+!13 = [builtin_given_names = builtin.given_names [iv]]
+!14 = @[<in-memory>: line: 17, column: 25], [builtin_given_names = builtin.given_names [i, j]]
+!15 = @[<in-memory>: line: 18, column: 29], [builtin_given_names = builtin.given_names [accum_val]]
+!16 = @[<in-memory>: line: 19, column: 29], [builtin_given_names = builtin.given_names [sum]]
+!17 = @[<in-memory>: line: 20, column: 29], []
+!18 = @[<in-memory>: line: 24, column: 21], [builtin_given_names = builtin.given_names [result]]
+!19 = @[<in-memory>: line: 25, column: 21], []
+!20 = @[<in-memory>: line: 4, column: 17], []
+!21 = @[<in-memory>: line: 2, column: 13], []

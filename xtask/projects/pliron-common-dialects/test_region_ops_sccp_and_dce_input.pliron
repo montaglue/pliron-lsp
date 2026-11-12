@@ -1,0 +1,56 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @region_fold: llvm.func <builtin.fp32 () variadic = false> [] {
+      ^entry():
+        zero = builtin.constant <builtin.integer <0: i64>> : builtin.integer i64;
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        cond = llvm.icmp zero <ULT> one : builtin.integer i1;
+        true_val = builtin.constant <builtin.single 1.0> : builtin.fp32;
+        false_val = builtin.constant <builtin.single 2.0> : builtin.fp32;
+        if_res = cf.if cond -> (builtin.fp32) {
+            ^entry():
+                cf.yield true_val
+        } else {
+            ^entry():
+                cf.yield false_val
+        };
+        br_res = cf.execute_region -> (builtin.fp32) {
+            ^entry():
+                cf.cond_br if cond ^on_true(if_res) else ^on_false(false_val)
+            ^on_true(x : builtin.fp32):
+                cf.br ^exit(x)
+            ^on_false(y : builtin.fp32):
+                cf.br ^exit(y)
+            ^exit(v : builtin.fp32):
+                cf.yield v
+        };
+        c0 = index.constant <index.constant 0> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        c5 = index.constant <index.constant 5> : index.index;
+        for_res = cf.for c5 to c0 step c1 (br_res) {
+            ^entry(iv : index.index, acc : builtin.fp32):
+                next = llvm.fadd <FAST> acc, false_val : builtin.fp32;
+                cf.yield next
+        };
+        llvm.return for_res
+    };
+    llvm.func @poison_cond: llvm.func <builtin.integer i64 (builtin.integer i64) variadic = false> [] {
+      ^entry(n : builtin.integer i64):
+        pc = llvm.poison : builtin.integer i1;
+        c3 = index.constant <index.constant 3> : index.index;
+        c4 = index.constant <index.constant 4> : index.index;
+        r = cf.execute_region -> (builtin.integer i64) {
+            ^entry():
+                cf.cond_br if pc ^p_true() else ^p_false()
+            ^p_true():
+                sum = index.add c3, c4 : index.index;
+                sum_int = index.to_integer sum to builtin.integer i64;
+                cf.br ^p_exit(sum_int)
+            ^p_false():
+                cf.br ^p_exit(n)
+            ^p_exit(v : builtin.integer i64):
+                cf.yield v
+        };
+        llvm.return r
+    }
+}

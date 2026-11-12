@@ -1,0 +1,37 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @simplify: llvm.func <builtin.fp32 (builtin.integer i64) variadic = false>
+      [] 
+    {
+      ^entry_block2v1(n_v0: builtin.integer i64) !1:
+        t_v1 = builtin.constant <builtin.integer <1: i1>> : builtin.integer i1 !2;
+        f_v2 = builtin.constant <builtin.integer <0: i1>> : builtin.integer i1 !3;
+        one_v3 = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64 !4;
+        p_v4 = llvm.alloca [builtin.fp32  x one_v3]  : llvm.ptr (0) !5;
+        f1_v5 = builtin.constant <builtin.single 1> : builtin.fp32  !6;
+        f2_v6 = builtin.constant <builtin.single 2> : builtin.fp32  !7;
+        f3_v7 = builtin.constant <builtin.single 3> : builtin.fp32  !8;
+        c0_v8 = index.constant <index.constant 0> : index.index  !9;
+        c1_v9 = index.constant <index.constant 1> : index.index  !10;
+        c5_v10 = index.constant <index.constant 5> : index.index  !11;
+        n_idx_v11 = index.from_integer n_v0 : index.index  !12;
+        llvm.store *p_v4 <- f1_v5  !13;
+        llvm.store *p_v4 <- f2_v6  !14;
+        e_v14 = cf.execute_region -> (builtin.fp32 ) 
+        {
+          ^entry_block8v1() !15:
+            cf.yield f3_v7 !16
+        }
+ !17;
+        llvm.store *p_v4 <- e_v14  !18;
+        s_v23 = cf.for c0_v8 to n_idx_v11 step c1_v9 (f2_v6) 
+        {
+          ^entry_block14v1(iv2_v24: index.index , acc2_v25: builtin.fp32 ) !19:
+            next_v26 = llvm.fadd <NNAN | NINF | NSZ | ARCP | CONTRACT | AFN | REASSOC> acc2_v25, f1_v5 : builtin.fp32  !20;
+            cf.yield next_v26 !21
+        }
+ !22;
+        llvm.return s_v23 !23
+    } !24
+}

@@ -1,0 +1,65 @@
+builtin.module @test_module {
+  ^entry():
+    llvm.func @simplify: llvm.func <builtin.fp32 (builtin.integer i64) variadic = false> [] {
+      ^entry(n : builtin.integer i64):
+        t = builtin.constant <builtin.integer <1: i1>> : builtin.integer i1;
+        f = builtin.constant <builtin.integer <0: i1>> : builtin.integer i1;
+        one = builtin.constant <builtin.integer <1: i64>> : builtin.integer i64;
+        p = llvm.alloca [builtin.fp32 x one] : llvm.ptr(0);
+        f1 = builtin.constant <builtin.single 1.0> : builtin.fp32;
+        f2 = builtin.constant <builtin.single 2.0> : builtin.fp32;
+        f3 = builtin.constant <builtin.single 3.0> : builtin.fp32;
+        c0 = index.constant <index.constant 0> : index.index;
+        c1 = index.constant <index.constant 1> : index.index;
+        c5 = index.constant <index.constant 5> : index.index;
+        n_idx = index.from_integer n : index.index;
+        a = cf.if t -> (builtin.fp32) {
+            ^entry():
+                llvm.store *p <- f1;
+                cf.yield f1
+        } else {
+            ^entry():
+                cf.yield f2
+        };
+        b = cf.if f -> (builtin.fp32) {
+            ^entry():
+                cf.yield f1
+        } else {
+            ^entry():
+                llvm.store *p <- f2;
+                cf.yield f2
+        };
+        cf.if f -> () {
+            ^entry():
+                llvm.store *p <- f3;
+                cf.yield
+        };
+        e = cf.execute_region -> (builtin.fp32) {
+            ^entry():
+                cf.cond_br if f ^on_true(f1) else ^on_false(f3)
+            ^on_true(x : builtin.fp32):
+                cf.br ^exit(x)
+            ^on_false(y : builtin.fp32):
+                cf.br ^exit(y)
+            ^exit(v : builtin.fp32):
+                cf.yield v
+        };
+        llvm.store *p <- e;
+        r = cf.for c5 to c0 step c1 (a) {
+            ^entry(iv1 : index.index, acc1 : builtin.fp32):
+                llvm.store *p <- acc1;
+                cf.yield acc1
+        };
+        cf.nd_for [c0, c0] to [c5, c0] step [c1, c1] {
+            ^entry(i0 : index.index, j0 : index.index):
+                llvm.store *p <- f3;
+                cf.yield
+        };
+        s = cf.for c0 to n_idx step c1 (b) {
+            ^entry(iv2 : index.index, acc2 : builtin.fp32):
+                next = llvm.fadd <FAST> acc2, r : builtin.fp32;
+                cf.yield next
+        };
+        llvm.return s
+    }
+}

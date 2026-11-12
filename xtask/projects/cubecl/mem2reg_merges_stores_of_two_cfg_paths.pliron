@@ -1,0 +1,17 @@
+builtin.func @f: builtin.function <(cube.bool, cube.index, cube.index) -> (cube.index)> [] {
+  ^entry(cond: cube.bool, x: cube.index, y: cube.index):
+    a = memory.declare_variable cube.index Local, align = 4, init = cube.index 0;
+    memory.store (a, x) [] []: <(cube.ptr <cube.index, Local>, cube.index) -> ()>;
+    cf.branch_conditional if cond ^bb0() else ^bb1()
+
+  ^bb0():
+    memory.store (a, y) [] []: <(cube.ptr <cube.index, Local>, cube.index) -> ()>;
+    cf.branch ^bb2()
+
+  ^bb1():
+    cf.branch ^bb2()
+
+  ^bb2():
+    l = memory.load (a) [] []: <(cube.ptr <cube.index, Local>) -> (cube.index)>;
+    branch.return l
+}

@@ -1,0 +1,21 @@
+builtin.module @test_module 
+{
+  ^entry_block1v1() !0:
+    llvm.func @test_cond_br: llvm.func <builtin.fp32 () variadic = false>
+      [] 
+    {
+      ^entry_block2v1() !1:
+        zero_v7 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64 !2;
+        one_v8 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64 !3;
+        cond_v2 = llvm.icmp zero_v7 <ULT> one_v8 : builtin.integer i1 !4;
+        true_val_v9 = llvm.constant <builtin.single 1> : builtin.fp32  !5;
+        false_val_v10 = llvm.constant <builtin.single 2> : builtin.fp32  !6;
+        llvm.cond_br if cond_v2 ^true_blk_block5v1(true_val_v9) else ^false_blk_block3v3(false_val_v10) !7
+
+      ^true_blk_block5v1(x_v5: builtin.fp32 ) !8:
+        llvm.return x_v5 !9
+
+      ^false_blk_block3v3(y_v6: builtin.fp32 ) !10:
+        llvm.return y_v6 !11
+    } !12
+}
